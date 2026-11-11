@@ -1,3 +1,4 @@
+
 name: CI and CD
 
 on:
@@ -18,6 +19,7 @@ jobs:
   verify:
     name: Verify (Node.js 22)
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -51,6 +53,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/LIVE'
     runs-on: ubuntu-latest
     environment: production
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -68,15 +71,18 @@ jobs:
   pages:
     name: Publish static GitHub Pages site
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/LIVE'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       pages: write
       id-token: write
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
