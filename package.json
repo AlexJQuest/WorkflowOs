@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node scripts/start-local.js",
     "dev": "node --watch server.js",
+    "build:pages": "node scripts/build-pages.js",
     "db:migrate": "node scripts/run-migrations.js",
     "test": "node --test --test-concurrency=1",
     "check": "node --check server.js && node --check scripts/start-local.js && node --check scripts/run-migrations.js && node --check scripts/deploy-hook.js && node --check src/api/database.js && node --check src/api/migrate.js && node --check src/api/service.js && node --check src/api/dashboard.service.js && node --check src/api/barcodes.js && node --check src/api/catalogue.service.js && node --check tests/auth-flow.test.js && node --check tests/business-data.test.js && node --check tests/deploy-hook.test.js && node --check tests/dashboard.test.js && node --check tests/catalogue.test.js && node --check tests/product-edit.test.js"

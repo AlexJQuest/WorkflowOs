@@ -1,0 +1,11 @@
+* [33m0309853[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;32mbackup/main-before-sync[m[33m)[m Add manual GitHub Pages deployment
+* [33m63e47ef[m Separate GitHub Pages from CI CD pipeline
+*   [33m275f3cd[m Promote LIVE to main
+[32m|[m[33m\[m  
+[32m|[m *   [33mb93a181[m[33m ([m[1;31morigin/LIVE[m[33m, [m[1;32mLIVE[m[33m)[m Merge remote-tracking branch 'origin/LIVE' into LIVE
+[32m|[m [34m|[m[35m\[m  
+[32m|[m [34m|[m * [33m6b45665[m Update ci-cd.yml  Removed Enablement
+[32m|[m * [35m|[m [33mdd9ef08[m[33m ([m[1;32mbackup/LIVE-before-sync[m[33m)[m Fix GitHub Pages workflow permissions
+[32m|[m [35m|[m[35m/[m  
+[32m|[m * [33m650d5f3[m Update deployment and CI/CD documentation
+[32m|[m * [33mf2c2379[m[33m ([m[1;31morigin/TEST[m[33m, [m[1;31morigin/DEV[m[33m, [m[1;32mTEST[m[33m, [m[1;32mDEV[m[33m)[m Fix LIVE deploy and enable GitHub Pages
