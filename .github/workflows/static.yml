@@ -1,43 +1,72 @@
-# Simple workflow for deploying static content to GitHub Pages
-name: Deploy static content to Pages
+
+name: CI and CD
 
 on:
-  # Runs on pushes targeting the default branch
   push:
-    branches: ["main"]
+    branches: [main, DEV, TEST, LIVE]
 
-  # Allows you to run this workflow manually from the Actions tab
+  pull_request:
+    branches: [main, DEV, TEST, LIVE]
+
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: workflowos-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  # Single deploy job since we're just deploying
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  verify:
+    name: Verify (Node.js 22)
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
+      - name: Check out source
         uses: actions/checkout@v4
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          # Upload entire repository
-          path: '.'
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        run: npm run check
+
+      - name: Apply migrations to a fresh CI database
+        run: npm run db:migrate
+        env:
+          DATABASE_PATH: ${{ runner.temp }}/workflowos-ci.db
+
+      - name: Run integration tests
+        run: npm test
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  deploy:
+    name: Deploy via configured HTTPS hook
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/LIVE'
+    runs-on: ubuntu-latest
+
+    environment: production
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Trigger deployment
+        run: node scripts/deploy-hook.js
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
