@@ -52,6 +52,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Trigger deployment
         run: node scripts/deploy-hook.js
         env:

@@ -32,7 +32,7 @@ A separate Pages job deploys only the static `pages/` status/information page af
 6. Ensure the provider has required runtime/database/environment variables and an explicit migration process.
 7. Confirm provider health checks and rollback before enabling any API deployment hook.
 
-The local `origin` remote now points to `https://github.com/AlexJQuest/WorkflowOs.git`, but the initial push was rejected because this environment has no valid GitHub credentials. Authenticate Git with Git Credential Manager or VS Code's GitHub sign-in, then push `main`, `DEV`, `TEST`, and `LIVE`. GitHub Actions will run after the refs arrive. Also, the Pages site is not the operational SaaS; the API/database host remains to be selected and configured.
+The local `origin` remote points to `https://github.com/AlexJQuest/WorkflowOs.git`; `main`, `DEV`, `TEST`, and `LIVE` have been pushed. The first LIVE run found that Pages had not yet been enabled and that the hook job lacked a checkout. The workflow has been corrected to enable Pages and check out the deployment script; the updated DEV verification passed, and the promoted TEST/LIVE runs are currently queued. The Pages site is not the operational SaaS; the API/database host remains to be selected and configured.
 
 ## Safety
 
