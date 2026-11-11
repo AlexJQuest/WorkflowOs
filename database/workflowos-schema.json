@@ -1,0 +1,218 @@
+[
+  {
+    "type": "index",
+    "name": "idx_business_memberships_business_id",
+    "tbl_name": "business_memberships",
+    "sql": "CREATE INDEX idx_business_memberships_business_id ON business_memberships(business_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_business_memberships_user_id",
+    "tbl_name": "business_memberships",
+    "sql": "CREATE INDEX idx_business_memberships_user_id ON business_memberships(user_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_customers_business_id",
+    "tbl_name": "customers",
+    "sql": "CREATE INDEX idx_customers_business_id ON customers(business_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_inventory_business_quantity",
+    "tbl_name": "inventory",
+    "sql": "CREATE INDEX idx_inventory_business_quantity ON inventory(business_id, quantity_on_hand, reorder_level)"
+  },
+  {
+    "type": "index",
+    "name": "idx_inventory_movements_business_product",
+    "tbl_name": "inventory_movements",
+    "sql": "CREATE INDEX idx_inventory_movements_business_product ON inventory_movements(business_id, product_id, created_at)"
+  },
+  {
+    "type": "index",
+    "name": "idx_product_barcodes_global_product",
+    "tbl_name": "product_barcodes",
+    "sql": "CREATE INDEX idx_product_barcodes_global_product ON product_barcodes(global_product_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_product_barcodes_lookup",
+    "tbl_name": "product_barcodes",
+    "sql": "CREATE INDEX idx_product_barcodes_lookup ON product_barcodes(barcode, verification_status)"
+  },
+  {
+    "type": "index",
+    "name": "idx_product_barcodes_unique",
+    "tbl_name": "product_barcodes",
+    "sql": "CREATE UNIQUE INDEX idx_product_barcodes_unique\r\n  ON product_barcodes(barcode)"
+  },
+  {
+    "type": "index",
+    "name": "idx_product_barcodes_verified_unique",
+    "tbl_name": "product_barcodes",
+    "sql": "CREATE UNIQUE INDEX idx_product_barcodes_verified_unique\r\n  ON product_barcodes(barcode) WHERE verification_status = 'verified'"
+  },
+  {
+    "type": "index",
+    "name": "idx_products_business_active_name",
+    "tbl_name": "products",
+    "sql": "CREATE INDEX idx_products_business_active_name\r\n  ON products(business_id, is_active, name)"
+  },
+  {
+    "type": "index",
+    "name": "idx_products_business_barcode_unique",
+    "tbl_name": "products",
+    "sql": "CREATE UNIQUE INDEX idx_products_business_barcode_unique\r\n  ON products(business_id, barcode) WHERE barcode IS NOT NULL AND barcode <> ''"
+  },
+  {
+    "type": "index",
+    "name": "idx_products_business_id",
+    "tbl_name": "products",
+    "sql": "CREATE INDEX idx_products_business_id ON products(business_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_products_business_search",
+    "tbl_name": "products",
+    "sql": "CREATE INDEX idx_products_business_search ON products(business_id, name, sku)"
+  },
+  {
+    "type": "index",
+    "name": "idx_products_global_catalogue",
+    "tbl_name": "products",
+    "sql": "CREATE INDEX idx_products_global_catalogue ON products(global_catalogue_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_sale_items_product",
+    "tbl_name": "sale_items",
+    "sql": "CREATE INDEX idx_sale_items_product ON sale_items(product_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_sale_items_sale",
+    "tbl_name": "sale_items",
+    "sql": "CREATE INDEX idx_sale_items_sale ON sale_items(sale_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_sales_business_created_status",
+    "tbl_name": "sales",
+    "sql": "CREATE INDEX idx_sales_business_created_status ON sales(business_id, created_at, status)"
+  },
+  {
+    "type": "index",
+    "name": "idx_sales_business_customer",
+    "tbl_name": "sales",
+    "sql": "CREATE INDEX idx_sales_business_customer ON sales(business_id, customer_id)"
+  },
+  {
+    "type": "index",
+    "name": "idx_sales_business_idempotency",
+    "tbl_name": "sales",
+    "sql": "CREATE UNIQUE INDEX idx_sales_business_idempotency ON sales(business_id, idempotency_key) WHERE idempotency_key IS NOT NULL"
+  },
+  {
+    "type": "index",
+    "name": "idx_sales_business_reference",
+    "tbl_name": "sales",
+    "sql": "CREATE UNIQUE INDEX idx_sales_business_reference ON sales(business_id, transaction_reference)"
+  },
+  {
+    "type": "index",
+    "name": "idx_sessions_user_id",
+    "tbl_name": "sessions",
+    "sql": "CREATE INDEX idx_sessions_user_id ON sessions(user_id)"
+  },
+  {
+    "type": "table",
+    "name": "business_memberships",
+    "tbl_name": "business_memberships",
+    "sql": "CREATE TABLE business_memberships (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  user_id INTEGER NOT NULL,\r\n  business_id INTEGER NOT NULL,\r\n  role TEXT NOT NULL DEFAULT 'admin',\r\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  UNIQUE(user_id, business_id),\r\n  FOREIGN KEY (user_id) REFERENCES users(id),\r\n  FOREIGN KEY (business_id) REFERENCES businesses(id)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "business_settings",
+    "tbl_name": "business_settings",
+    "sql": "CREATE TABLE business_settings (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  business_id INTEGER NOT NULL UNIQUE,\r\n  operating_hours TEXT,\r\n  contact_email TEXT,\r\n  phone TEXT,\r\n  address TEXT,\r\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  FOREIGN KEY (business_id) REFERENCES businesses(id)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "businesses",
+    "tbl_name": "businesses",
+    "sql": "CREATE TABLE businesses (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  owner_user_id INTEGER NOT NULL,\r\n  name TEXT NOT NULL,\r\n  business_type TEXT NOT NULL,\r\n  currency TEXT NOT NULL DEFAULT 'ZAR',\r\n  timezone TEXT NOT NULL DEFAULT 'Africa/Johannesburg',\r\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  FOREIGN KEY (owner_user_id) REFERENCES users(id)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "customers",
+    "tbl_name": "customers",
+    "sql": "CREATE TABLE customers (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  business_id INTEGER NOT NULL,\r\n  name TEXT NOT NULL,\r\n  email TEXT,\r\n  phone TEXT,\r\n  loyalty_points INTEGER NOT NULL DEFAULT 0,\r\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  FOREIGN KEY (business_id) REFERENCES businesses(id),\r\n  UNIQUE (business_id, email)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "global_product_catalogue",
+    "tbl_name": "global_product_catalogue",
+    "sql": "CREATE TABLE global_product_catalogue (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  product_name TEXT NOT NULL,\r\n  brand TEXT,\r\n  packaging_size TEXT,\r\n  category TEXT,\r\n  description TEXT,\r\n  verification_status TEXT NOT NULL DEFAULT 'incomplete' CHECK (verification_status IN ('incomplete', 'verified')),\r\n  data_source TEXT NOT NULL,\r\n  date_added TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  verified_at TEXT\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "inventory",
+    "tbl_name": "inventory",
+    "sql": "CREATE TABLE inventory (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  business_id INTEGER NOT NULL,\r\n  product_id INTEGER NOT NULL,\r\n  quantity_on_hand INTEGER NOT NULL DEFAULT 0 CHECK (quantity_on_hand >= 0),\r\n  reorder_level INTEGER NOT NULL DEFAULT 0 CHECK (reorder_level >= 0),\r\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  UNIQUE (business_id, product_id),\r\n  FOREIGN KEY (business_id) REFERENCES businesses(id),\r\n  FOREIGN KEY (product_id) REFERENCES products(id)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "inventory_movements",
+    "tbl_name": "inventory_movements",
+    "sql": "CREATE TABLE inventory_movements (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  business_id INTEGER NOT NULL,\r\n  product_id INTEGER NOT NULL,\r\n  movement_type TEXT NOT NULL CHECK (movement_type IN ('opening', 'receipt', 'sale', 'refund', 'adjustment')),\r\n  quantity INTEGER NOT NULL CHECK (quantity <> 0),\r\n  reference_type TEXT,\r\n  reference_id INTEGER,\r\n  notes TEXT,\r\n  created_at TEXT NOT NULL,\r\n  FOREIGN KEY (business_id) REFERENCES businesses(id),\r\n  FOREIGN KEY (product_id) REFERENCES products(id)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "product_barcode_duplicate_archive",
+    "tbl_name": "product_barcode_duplicate_archive",
+    "sql": "CREATE TABLE product_barcode_duplicate_archive (\r\n  archive_id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  original_barcode_record_id INTEGER NOT NULL,\r\n  global_product_id INTEGER NOT NULL,\r\n  barcode TEXT NOT NULL,\r\n  barcode_format TEXT NOT NULL,\r\n  data_source TEXT NOT NULL,\r\n  verification_status TEXT NOT NULL,\r\n  date_added TEXT NOT NULL,\r\n  verified_at TEXT,\r\n  archived_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "product_barcodes",
+    "tbl_name": "product_barcodes",
+    "sql": "CREATE TABLE product_barcodes (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  global_product_id INTEGER NOT NULL,\r\n  barcode TEXT NOT NULL,\r\n  barcode_format TEXT NOT NULL CHECK (barcode_format IN ('EAN-13', 'EAN-8', 'UPC-A')),\r\n  data_source TEXT NOT NULL,\r\n  verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK (verification_status IN ('unverified', 'verified')),\r\n  date_added TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  verified_at TEXT,\r\n  FOREIGN KEY (global_product_id) REFERENCES global_product_catalogue(id)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "products",
+    "tbl_name": "products",
+    "sql": "CREATE TABLE products (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  business_id INTEGER NOT NULL,\r\n  name TEXT NOT NULL,\r\n  sku TEXT,\r\n  category TEXT,\r\n  price_cents INTEGER NOT NULL DEFAULT 0,\r\n  cost_cents INTEGER NOT NULL DEFAULT 0,\r\n  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),\r\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, cost_is_known INTEGER NOT NULL DEFAULT 0 CHECK (cost_is_known IN (0, 1)), brand TEXT, barcode TEXT, barcode_status TEXT NOT NULL DEFAULT 'unverified' CHECK (barcode_status IN ('unverified', 'verified')), description TEXT, packaging_size TEXT, global_catalogue_id INTEGER REFERENCES global_product_catalogue(id), unit_of_measure TEXT NOT NULL DEFAULT 'unit', image_url TEXT,\r\n  FOREIGN KEY (business_id) REFERENCES businesses(id),\r\n  UNIQUE (business_id, sku)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "sale_items",
+    "tbl_name": "sale_items",
+    "sql": "CREATE TABLE sale_items (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  sale_id INTEGER NOT NULL,\r\n  product_id INTEGER NOT NULL,\r\n  product_name_snapshot TEXT NOT NULL,\r\n  product_category_snapshot TEXT,\r\n  quantity INTEGER NOT NULL CHECK (quantity > 0),\r\n  unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),\r\n  unit_cost_cents INTEGER,\r\n  line_total_cents INTEGER NOT NULL CHECK (line_total_cents >= 0),\r\n  FOREIGN KEY (sale_id) REFERENCES sales(id),\r\n  FOREIGN KEY (product_id) REFERENCES products(id),\r\n  CHECK (unit_cost_cents IS NULL OR unit_cost_cents >= 0)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "sales",
+    "tbl_name": "sales",
+    "sql": "CREATE TABLE sales (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  business_id INTEGER NOT NULL,\r\n  customer_id INTEGER,\r\n  transaction_reference TEXT NOT NULL,\r\n  idempotency_key TEXT,\r\n  subtotal_cents INTEGER NOT NULL CHECK (subtotal_cents >= 0),\r\n  discount_cents INTEGER NOT NULL DEFAULT 0 CHECK (discount_cents >= 0),\r\n  tax_cents INTEGER NOT NULL DEFAULT 0 CHECK (tax_cents >= 0),\r\n  total_cents INTEGER NOT NULL CHECK (total_cents >= 0),\r\n  payment_method TEXT,\r\n  status TEXT NOT NULL DEFAULT 'completed' CHECK (status IN ('completed', 'refunded', 'cancelled')),\r\n  created_at TEXT NOT NULL,\r\n  updated_at TEXT NOT NULL,\r\n  FOREIGN KEY (business_id) REFERENCES businesses(id),\r\n  FOREIGN KEY (customer_id) REFERENCES customers(id)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "schema_migrations",
+    "tbl_name": "schema_migrations",
+    "sql": "CREATE TABLE schema_migrations (\n      version TEXT PRIMARY KEY,\n      checksum TEXT NOT NULL,\n      applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n    )"
+  },
+  {
+    "type": "table",
+    "name": "sessions",
+    "tbl_name": "sessions",
+    "sql": "CREATE TABLE sessions (\r\n  id TEXT PRIMARY KEY,\r\n  user_id INTEGER NOT NULL,\r\n  business_id INTEGER,\r\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  expires_at TEXT NOT NULL,\r\n  FOREIGN KEY (user_id) REFERENCES users(id),\r\n  FOREIGN KEY (business_id) REFERENCES businesses(id)\r\n)"
+  },
+  {
+    "type": "table",
+    "name": "users",
+    "tbl_name": "users",
+    "sql": "CREATE TABLE users (\r\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\r\n  email TEXT NOT NULL UNIQUE,\r\n  password_hash TEXT NOT NULL,\r\n  first_name TEXT,\r\n  last_name TEXT,\r\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\r\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\r\n)"
+  }
+]
