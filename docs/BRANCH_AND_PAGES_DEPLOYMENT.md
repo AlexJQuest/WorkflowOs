@@ -20,11 +20,12 @@ To make the actual product live, select and configure a suitable Node.js/API hos
 
 ## Repository setup still required
 
-1. Authenticate Git with Git Credential Manager or VS Code's GitHub sign-in; the initial HTTPS push was rejected because no valid GitHub credentials were available in this environment.
-2. Push `main`, `DEV`, `TEST`, and `LIVE` to the GitHub repository.
-3. In GitHub **Settings → Pages**, set the source to **GitHub Actions**.
-4. In **Settings → Environments**, configure `production` approval reviewers and the selected API host's HTTPS `DEPLOY_HOOK_URL` if enabling API deployment.
-5. Protect `DEV`, `TEST`, and `LIVE`; require checks and reviews before merging.
-6. Do not treat the Pages static notice as client onboarding or production acceptance.
+1. `main`, `DEV`, `TEST`, and `LIVE` have been pushed to the GitHub repository.
+2. The LIVE workflow now requests GitHub Actions Pages enablement automatically; confirm **Settings → Pages** shows **GitHub Actions** if repository policy requires a one-time manual setting.
+3. In **Settings → Environments**, configure `production` approval reviewers and the selected API host's HTTPS `DEPLOY_HOOK_URL` if enabling API deployment.
+4. Protect `DEV`, `TEST`, and `LIVE`; require checks and reviews before merging.
+5. Do not treat the Pages static notice as client onboarding or production acceptance.
+
+At the time of this documentation update, the corrected DEV verification passed, while the promoted TEST and LIVE runs were queued. The Pages URL should be considered unavailable until its LIVE deployment job completes successfully.
 
 No production API host or deploy hook is configured by this repository yet.
