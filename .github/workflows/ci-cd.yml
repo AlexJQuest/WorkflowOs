@@ -28,22 +28,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check out source
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - name: Install locked dependencies
+      - name: Install dependencies
         run: npm ci
 
       - name: Check JavaScript syntax
         run: npm run check
 
-      - name: Apply migrations to a fresh CI database
+      - name: Apply database migrations
         run: npm run db:migrate
         env:
           DATABASE_PATH: ${{ runner.temp }}/workflowos-ci.db
@@ -51,15 +51,86 @@ jobs:
       - name: Run integration tests
         run: npm test
 
-      - name: Audit production dependencies
+      - name: Audit dependencies
         run: npm audit --omit=dev --audit-level=high
 
 
   # ==========================================
-  # 2. LIVE SAAS DEPLOYMENT
+  # 2. BUILD FRONTEND
   # ==========================================
 
-  deploy:
+  build:
+    name: Build WorkflowOS frontend
+    needs: verify
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build frontend
+        run: npm run build:pages
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: workflowos-frontend
+          path: pages/
+          retention-days: 1
+
+
+  # ==========================================
+  # 3. DEPLOY TO GITHUB PAGES
+  # ==========================================
+
+  deploy-pages:
+    name: Deploy WorkflowOS to GitHub Pages
+    needs: build
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: workflowos-frontend
+          path: ./site
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+
+  # ==========================================
+  # 4. LIVE SAAS DEPLOYMENT
+  # ==========================================
+
+  deploy-saas:
     name: Deploy SaaS via HTTPS hook
     needs: verify
 
@@ -70,10 +141,10 @@ jobs:
     environment: production
 
     steps:
-      - name: Check out source
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -82,73 +153,3 @@ jobs:
         run: node scripts/deploy-hook.js
         env:
           DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
-
-
-  # ==========================================
-  # 3. GITHUB PAGES DEPLOYMENT
-  # ==========================================
-
-  pages:
-    name: Build and deploy ${{ github.ref_name }} to GitHub Pages
-
-    needs: verify
-
-    if: >
-      github.event_name == 'push' &&
-      contains(fromJSON('["main","DEV","TEST","LIVE"]'), github.ref_name)
-
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
-    concurrency:
-      group: workflowos-pages-deployment
-      cancel-in-progress: false
-
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Build GitHub Pages site
-        run: npm run build:pages
-
-      - name: Determine deployment destination
-        id: deploy-target
-        shell: bash
-        run: |
-          case "${GITHUB_REF_NAME}" in
-            main)
-              echo "destination_dir=." >> "$GITHUB_OUTPUT"
-              echo "commit_message=Deploy production preview from main" >> "$GITHUB_OUTPUT"
-              ;;
-            DEV)
-              echo "destination_dir=dev" >> "$GITHUB_OUTPUT"
-              echo "commit_message=Deploy development preview from DEV" >> "$GITHUB_OUTPUT"
-              ;;
-            TEST)
-              echo "destination_dir=test" >> "$GITHUB_OUTPUT"
-              echo "commit_message=Deploy testing preview from TEST" >> "$GITHUB_OUTPUT"
-              ;;
-            LIVE)
-              echo "destination_dir=live" >> "$GITHUB_OUTPUT"
-              echo "commit_message=Deploy LIVE preview from LIVE" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: ./pages
-          destination_dir: ${{ steps.deploy-target.outputs.destination_dir }}
-          keep_files: true
-          user_name: GitHub Actions
-          user_email: actions@github.com
-          commit_message: ${{ steps.deploy-target.outputs.commit_message }}
