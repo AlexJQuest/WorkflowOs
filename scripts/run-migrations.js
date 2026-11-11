@@ -1,13 +1,20 @@
-const fs = require('fs');
-const path = require('path');
-const Database = require('better-sqlite3');
+
+const db = require('../src/api/database');
 const { applyMigrations } = require('../src/api/migrate');
 
-const dbPath = process.env.DATABASE_PATH || path.join(__dirname, '..', 'database', 'dev.db');
-const databaseDir = path.dirname(dbPath);
-if (!fs.existsSync(databaseDir)) fs.mkdirSync(databaseDir, { recursive: true });
+async function main() {
+  try {
+    const files = await applyMigrations(db);
 
-const db = new Database(dbPath);
-const files = applyMigrations(db);
-console.log(`Applied ${files.length} new migration(s) to ${dbPath}`);
-db.close();
+    console.log(
+      `Applied ${files.length} new MariaDB migration(s).`
+    );
+  } finally {
+    await db.end();
+  }
+}
+
+main().catch((error) => {
+  console.error('MariaDB migration failed:', error);
+  process.exitCode = 1;
+});
