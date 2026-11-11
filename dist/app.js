@@ -1,3 +1,4 @@
+const BASE_PATH = '/WorkflowOs/';
 const app = document.getElementById('app');
 let sessionToken = localStorage.getItem('workflowos_session') || '';
 let sessionInfo = null;
@@ -21,6 +22,16 @@ const navItems = [
   { id: 'integrations', label: 'Integrations', icon: '⌘', planned: true },
   { id: 'settings', label: 'Business Settings', icon: '⚙' },
 ];
+
+function appPath(path) {
+  return BASE_PATH + String(path || '').replace(/^\/+/, '');
+}
+
+function navigate(path, replace = false) {
+  const url = appPath(path);
+  if (replace) history.replaceState({}, '', url);
+  else history.pushState({}, '', url);
+}
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({
@@ -67,7 +78,7 @@ function clearSession() {
 }
 
 function goTo(path) {
-  history.pushState({}, '', path);
+  navigate(path);
   if (path === '/login') renderAuth();
   else loadAuthenticatedApp();
 }
@@ -81,7 +92,7 @@ function renderAuth(message = '') {
   app.innerHTML = `
     <main class="auth-layout">
       <section class="auth-story">
-        <a class="brand brand-light" href="/" aria-label="WorkflowOS home"><span class="brand-mark">W</span><span>workflow<span class="brand-accent">OS</span></span></a>
+        <a class="brand brand-light" href="/WorkflowOs/" aria-label="WorkflowOS home"><span class="brand-mark">W</span><span>workflow<span class="brand-accent">OS</span></span></a>
         <div class="auth-story-copy">
           <span class="eyebrow">BUSINESS, IN CLEAR VIEW</span>
           <h1>Make confident moves for your business.</h1>
@@ -157,7 +168,7 @@ async function login(event) {
     });
     sessionToken = data.sessionToken;
     localStorage.setItem('workflowos_session', sessionToken);
-    history.replaceState({}, '', '/dashboard');
+    navigate('/dashboard', true);
     await loadAuthenticatedApp();
   } catch (error) {
     message.textContent = error.message;
@@ -185,7 +196,7 @@ async function register(event) {
     });
     sessionToken = data.sessionToken;
     localStorage.setItem('workflowos_session', sessionToken);
-    history.replaceState({}, '', '/dashboard');
+    navigate('/dashboard', true);
     await loadAuthenticatedApp();
   } catch (error) {
     message.textContent = error.message;
@@ -197,22 +208,22 @@ async function register(event) {
 
 async function loadAuthenticatedApp() {
   if (!sessionToken) {
-    history.replaceState({}, '', '/login');
+    navigate('/login', true);
     renderAuth();
     return;
   }
   try {
     sessionInfo = await api('/api/session');
     if (!sessionInfo.business) throw new Error('No business is assigned to this account.');
-    if (location.pathname !== '/dashboard' && location.pathname !== '/') history.replaceState({}, '', '/dashboard');
-    if (location.pathname === '/') history.replaceState({}, '', '/dashboard');
+    if (location.pathname !== appPath('/dashboard') && location.pathname !== BASE_PATH) navigate('/dashboard', true);
+    if (location.pathname === BASE_PATH) navigate('/dashboard', true);
     currentView = ['dashboard', 'sales', 'products', 'inventory', 'customers', 'settings'].includes(currentView) ? currentView : 'dashboard';
     renderShell();
     await renderView(currentView);
   } catch (error) {
     if (sessionToken) {
       clearSession();
-      history.replaceState({}, '', '/login');
+      navigate('/login', true);
       renderAuth(error.message);
     }
   }
@@ -225,7 +236,7 @@ function renderShell() {
   app.innerHTML = `
     <div class="app-shell">
       <aside class="sidebar" id="sidebar">
-        <a class="brand" href="/dashboard"><span class="brand-mark">W</span><span>workflow<span class="brand-accent">OS</span></span></a>
+        <a class="brand" href="/WorkflowOs/dashboard"><span class="brand-mark">W</span><span>workflow<span class="brand-accent">OS</span></span></a>
         <div class="business-switcher"><span class="business-avatar">${escapeHtml((business.name || 'B').slice(0, 1).toUpperCase())}</span><span class="business-meta"><strong>${escapeHtml(business.name)}</strong><small>${escapeHtml(business.businessType || 'Business workspace')}</small></span><span class="switch-chevron">⌄</span></div>
         <p class="nav-caption">WORKSPACE</p>
         <nav class="side-nav" aria-label="Main navigation">${navItems.map((item) => item.planned
@@ -249,7 +260,7 @@ function renderShell() {
   document.getElementById('logout-button').addEventListener('click', async () => {
     try { await api('/api/logout', { method: 'POST' }); } catch { /* clear local session even if offline */ }
     clearSession();
-    history.replaceState({}, '', '/login');
+    navigate('/login', true);
     renderAuth();
   });
   document.getElementById('refresh-button').addEventListener('click', () => renderView(currentView));
