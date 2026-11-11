@@ -1,0 +1,86 @@
+name: CI and CD
+
+on:
+  push:
+    branches: [main, DEV, TEST, LIVE]
+  pull_request:
+    branches: [main, DEV, TEST, LIVE]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflowos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (Node.js 22)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check JavaScript syntax
+        run: npm run check
+
+      - name: Apply migrations to a fresh CI database
+        run: npm run db:migrate
+        env:
+          DATABASE_PATH: ${{ runner.temp }}/workflowos-ci.db
+
+      - name: Run integration tests
+        run: npm test
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  deploy:
+    name: Deploy via configured HTTPS hook
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/LIVE'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Trigger deployment
+        run: node scripts/deploy-hook.js
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
+
+  pages:
+    name: Publish static GitHub Pages site
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/LIVE'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload static site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./pages
+
+      - name: Deploy static site
+        id: deployment
+        uses: actions/deploy-pages@v4
