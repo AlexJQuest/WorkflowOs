@@ -4,8 +4,10 @@ name: CI and CD
 on:
   push:
     branches: [main, DEV, TEST, LIVE]
+
   pull_request:
     branches: [main, DEV, TEST, LIVE]
+
   workflow_dispatch:
 
 permissions:
@@ -16,6 +18,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+
+  # ==========================================
+  # 1. CONTINUOUS INTEGRATION
+  # ==========================================
+
   verify:
     name: Verify (Node.js 22)
     runs-on: ubuntu-latest
@@ -47,11 +54,19 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
+
+  # ==========================================
+  # 2. LIVE SAAS DEPLOYMENT
+  # ==========================================
+
   deploy:
-    name: Deploy via configured HTTPS hook
+    name: Deploy SaaS via HTTPS hook
     needs: verify
+
     if: github.event_name == 'push' && github.ref == 'refs/heads/LIVE'
+
     runs-on: ubuntu-latest
+
     environment: production
 
     steps:
@@ -68,33 +83,72 @@ jobs:
         env:
           DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
 
+
+  # ==========================================
+  # 3. GITHUB PAGES DEPLOYMENT
+  # ==========================================
+
   pages:
-    name: Publish static GitHub Pages site
+    name: Build and deploy ${{ github.ref_name }} to GitHub Pages
+
     needs: verify
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    if: >
+      github.event_name == 'push' &&
+      contains(fromJSON('["main","DEV","TEST","LIVE"]'), github.ref_name)
+
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
-      pages: write
-      id-token: write
+      contents: write
 
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: workflowos-pages-deployment
+      cancel-in-progress: false
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload static site
-        uses: actions/upload-pages-artifact@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          path: ./pages
+          node-version: 22
 
-      - name: Deploy static site
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Build GitHub Pages site
+        run: npm run build:pages
+
+      - name: Determine deployment destination
+        id: deploy-target
+        shell: bash
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            main)
+              echo "destination_dir=." >> "$GITHUB_OUTPUT"
+              echo "commit_message=Deploy production preview from main" >> "$GITHUB_OUTPUT"
+              ;;
+            DEV)
+              echo "destination_dir=dev" >> "$GITHUB_OUTPUT"
+              echo "commit_message=Deploy development preview from DEV" >> "$GITHUB_OUTPUT"
+              ;;
+            TEST)
+              echo "destination_dir=test" >> "$GITHUB_OUTPUT"
+              echo "commit_message=Deploy testing preview from TEST" >> "$GITHUB_OUTPUT"
+              ;;
+            LIVE)
+              echo "destination_dir=live" >> "$GITHUB_OUTPUT"
+              echo "commit_message=Deploy LIVE preview from LIVE" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./pages
+          destination_dir: ${{ steps.deploy-target.outputs.destination_dir }}
+          keep_files: true
+          user_name: GitHub Actions
+          user_email: actions@github.com
+          commit_message: ${{ steps.deploy-target.outputs.commit_message }}
