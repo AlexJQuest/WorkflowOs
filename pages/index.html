@@ -1,37 +1,13 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="WorkflowOS local business management platform preview and deployment status." />
-    <title>WorkflowOS — Small business, in clear view</title>
-    <style>
-      :root { color-scheme: light; font-family: Inter, "Segoe UI", Arial, sans-serif; color: #183229; background: #f5f8f5; }
-      * { box-sizing: border-box; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 28px; }
-      main { width: min(760px, 100%); padding: clamp(26px, 6vw, 56px); border: 1px solid #e1eae2; border-radius: 22px; background: white; box-shadow: 0 18px 56px rgba(24, 50, 41, .08); }
-      .brand { display: flex; align-items: center; gap: 11px; font-size: 19px; font-weight: 800; letter-spacing: -.5px; }
-      .mark { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 11px; background: #d9f0e0; color: #17613f; }
-      h1 { margin: 38px 0 14px; font-size: clamp(32px, 6vw, 52px); line-height: 1.08; letter-spacing: -1.8px; }
-      p { color: #65766b; font-size: 15px; line-height: 1.75; }
-      .notice { margin-top: 28px; padding: 17px 18px; border: 1px solid #f0dfb6; border-radius: 12px; background: #fffaf0; color: #765a24; font-size: 13px; line-height: 1.65; }
-      .actions { display: flex; flex-wrap: wrap; gap: 11px; margin-top: 25px; }
-      a.button { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 17px; border: 1px solid #dce7de; border-radius: 9px; color: #315343; font-size: 13px; font-weight: 700; text-decoration: none; }
-      a.primary { border-color: #198257; background: #198257; color: white; }
-      footer { margin-top: 35px; color: #9aa79e; font-size: 11px; }
-    </style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WorkflowOS</title>
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main>
-      <div class="brand"><span class="mark">W</span><span>workflow<span style="color:#198257">OS</span></span></div>
-      <h1>Small business,<br />in clear view.</h1>
-      <p>WorkflowOS is a South African small-business management prototype with a database-backed dashboard, product catalogue, inventory tracking, sales records, and barcode-ready workflows.</p>
-      <div class="notice"><strong>Static GitHub Pages preview.</strong> Pages cannot run the WorkflowOS Express API or SQLite database. Sign-in, business data, sales, barcode lookup, and dashboard operations are not available on this static page. The full prototype currently runs locally; a separate API/database host must be configured before this site can serve as the live application.</div>
-      <div class="actions">
-        <a class="button primary" href="https://github.com/AlexJQuest/WorkflowOs">View source repository</a>
-        <a class="button" href="https://github.com/AlexJQuest/WorkflowOs/blob/LIVE/README.md">Local setup instructions</a>
-      </div>
-      <footer>WorkflowOS · Static preview · Not a production service</footer>
-    </main>
+    <div id="app"></div>
+    <script src="/app.js"></script>
   </body>
 </html>
