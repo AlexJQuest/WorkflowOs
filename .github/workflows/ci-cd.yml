@@ -1,12 +1,20 @@
 
-name: CI and CD
+name: WorkflowOS CI and CD
 
 on:
   push:
-    branches: [main, DEV, TEST, LIVE]
+    branches:
+      - main
+      - DEV
+      - TEST
+      - LIVE
 
   pull_request:
-    branches: [main, DEV, TEST, LIVE]
+    branches:
+      - main
+      - DEV
+      - TEST
+      - LIVE
 
   workflow_dispatch:
 
@@ -14,24 +22,25 @@ permissions:
   contents: read
 
 concurrency:
-  group: workflowos-${{ github.ref }}
+  group: workflowos-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
 
   # ==========================================
   # 1. CONTINUOUS INTEGRATION
+  # All branches
   # ==========================================
 
   verify:
-    name: Verify (Node.js 22)
+    name: Verify WorkflowOS
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -43,7 +52,7 @@ jobs:
       - name: Check JavaScript syntax
         run: npm run check
 
-      - name: Apply database migrations
+      - name: Apply CI database migrations
         run: npm run db:migrate
         env:
           DATABASE_PATH: ${{ runner.temp }}/workflowos-ci.db
@@ -51,54 +60,75 @@ jobs:
       - name: Run integration tests
         run: npm test
 
-      - name: Audit dependencies
+      - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
 
   # ==========================================
   # 2. BUILD FRONTEND
+  # MAIN ONLY
   # ==========================================
 
-  build:
+  build-pages:
     name: Build WorkflowOS frontend
     needs: verify
 
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       github.event_name == 'workflow_dispatch')
 
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
 
       - name: Build frontend
         run: npm run build:pages
 
+      - name: Verify build output
+        run: |
+          if [ ! -d "pages" ]; then
+            echo "ERROR: pages/ directory was not generated."
+            exit 1
+          fi
+
+          if [ ! -f "pages/index.html" ]; then
+            echo "ERROR: pages/index.html is missing."
+            exit 1
+          fi
+
       - name: Upload frontend artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: workflowos-frontend
           path: pages/
-          retention-days: 1
 
 
   # ==========================================
-  # 3. DEPLOY TO GITHUB PAGES
+  # 3. DEPLOY GITHUB PAGES
+  # MAIN ONLY
   # ==========================================
 
   deploy-pages:
-    name: Deploy WorkflowOS to GitHub Pages
-    needs: build
+    name: Deploy WorkflowOS frontend
+    needs: build-pages
 
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
       pages: write
       id-token: write
 
@@ -107,49 +137,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Download frontend artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: workflowos-frontend
-          path: ./site
-
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./site
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-
-  # ==========================================
-  # 4. LIVE SAAS DEPLOYMENT
-  # ==========================================
-
-  deploy-saas:
-    name: Deploy SaaS via HTTPS hook
-    needs: verify
-
-    if: github.event_name == 'push' && github.ref == 'refs/heads/LIVE'
-
-    runs-on: ubuntu-latest
-
-    environment: production
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Trigger deployment
-        run: node scripts/deploy-hook.js
-        env:
-          DEPLOY_HOOK_URL: ${{ secrets.DEPLOY_HOOK_URL }}
