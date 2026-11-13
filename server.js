@@ -39,7 +39,7 @@ const {
 } = require('./src/api/catalogue.service');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 
 app.use(express.json());
@@ -529,21 +529,29 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-function startServer(port) {
+function startServer(port = PORT) {
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, () => {
-      console.log(`WorkflowOS listening on http://localhost:${port}`);
+    const server = app.listen(port, '0.0.0.0', () => {
+      console.log(
+        `WorkflowOS ${process.env.APP_ENV || 'DEV'} listening on port ${port}`
+      );
       resolve(server);
     });
 
     server.on('error', (error) => {
       if (error.code === 'EADDRINUSE') {
+        if (process.env.PORT) {
+          reject(error);
+          return;
+        }
+
         const nextPort = port + 1;
         console.warn(`Port ${port} is busy. Retrying on ${nextPort}`);
         server.close();
         resolve(startServer(nextPort));
         return;
       }
+
       reject(error);
     });
   });
