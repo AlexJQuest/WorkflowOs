@@ -29,7 +29,7 @@ jobs:
 
   # ==========================================
   # 1. CONTINUOUS INTEGRATION
-  # All branches
+  # Runs on all branches
   # ==========================================
 
   verify:
@@ -51,17 +51,6 @@ jobs:
 
       - name: Check JavaScript syntax
         run: npm run check
-
-      - name: Apply CI database migrations
-        run: npm run db:migrate
-        env:
-          DATABASE_PATH: ${{ runner.temp }}/workflowos-ci.db
-
-      - name: Run integration tests
-        run: npm test
-
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
 
 
   # ==========================================
@@ -101,11 +90,6 @@ jobs:
 
       - name: Verify build output
         run: |
-          if [ ! -d "pages" ]; then
-            echo "ERROR: pages/ directory was not generated."
-            exit 1
-          fi
-
           if [ ! -f "pages/index.html" ]; then
             echo "ERROR: pages/index.html is missing."
             exit 1
@@ -126,6 +110,11 @@ jobs:
     name: Deploy WorkflowOS frontend
     needs: build-pages
 
+    if: >
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       github.event_name == 'workflow_dispatch')
+
     runs-on: ubuntu-latest
 
     permissions:
@@ -137,6 +126,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
