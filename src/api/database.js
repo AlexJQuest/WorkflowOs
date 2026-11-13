@@ -1,3 +1,4 @@
+
 const mysql = require('mysql2/promise');
 const path = require('node:path');
 
@@ -29,11 +30,13 @@ const db = mysql.createPool({
   user: process.env.TEST_DB_USER,
   password: process.env.TEST_DB_PASSWORD,
   database: process.env.TEST_DB_NAME,
+
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
   charset: 'utf8mb4',
   timezone: 'Z',
+
   ssl: {
     rejectUnauthorized: false,
   },

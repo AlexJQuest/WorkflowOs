@@ -1,0 +1,19 @@
+{
+    "sqltools.connections": [
+        {
+            "mysqlOptions": {
+                "authProtocol": "default",
+                "enableSsl": "Disabled"
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "workflow-main-idle-pine.bulrush.cloud.layerbase.dev",
+            "port": 10106,
+            "driver": "MariaDB",
+            "name": "WorkflowOS TEST",
+            "database": "workflowos_test",
+            "username": "root",
+            "askForPassword": true
+        }
+    ]
+}
