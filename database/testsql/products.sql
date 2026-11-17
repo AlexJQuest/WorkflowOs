@@ -1,1 +1,1 @@
-select * FROM product_barcodes
+select * from business;

@@ -34,6 +34,8 @@ const {
 } = require('./src/api/service');
 
 const { getDashboardData } = require('./src/api/dashboard.service');
+const expenseService = require('./src/api/expenses.service');
+const reportsService = require('./src/api/reports.service');
 
 const {
   searchBusinessProducts,
@@ -72,6 +74,34 @@ function asyncHandler(handler) {
   return (req, res, next) => {
     Promise.resolve(handler(req, res, next)).catch(next);
   };
+}
+
+function handleExpenseError(error, res) {
+  const responses = {
+    FORBIDDEN: [403, 'Forbidden'],
+    INVALID_EXPENSE: [400, 'Expense details are invalid'],
+    INVALID_EXPENSE_FILTER: [400, 'Expense filters are invalid'],
+    INVALID_DATE_RANGE: [400, 'Invalid date range'],
+    INVALID_CATEGORY: [400, 'Category details are invalid'],
+    INVALID_SUPPLIER: [400, 'Supplier details are invalid'],
+    INVALID_PAYMENT: [400, 'Payment details are invalid'],
+    INVALID_RECURRING_EXPENSE: [400, 'Recurring expense details are invalid'],
+    RECURRING_GENERATION_LIMIT: [409, 'Too many recurring expenses are due; generate them in smaller batches'],
+    INVALID_BUSINESS: [404, 'Business not found'],
+    CATEGORY_EXISTS: [409, 'A category with this name already exists'],
+    CATEGORY_NOT_FOUND: [404, 'Expense category not found'],
+    EXPENSE_NOT_FOUND: [404, 'Expense not found'],
+    EXPENSE_NOT_EDITABLE: [409, 'This expense cannot be edited'],
+    EXPENSE_NOT_CANCELLABLE: [409, 'Only unpaid expenses can be cancelled'],
+    IDEMPOTENCY_CONFLICT: [409, 'The payment key was already used for a different payment'],
+    EXPENSE_NOT_PAYABLE: [409, 'This expense cannot accept payments'],
+    PAYMENT_EXCEEDS_BALANCE: [409, 'Payment exceeds the outstanding balance'],
+    RECURRING_EXPENSE_NOT_FOUND: [404, 'Recurring expense not found'],
+  };
+  const response = responses[error.message];
+  return response
+    ? res.status(response[0]).json({ error: response[1] })
+    : null;
 }
 
 function getToken(req) {
@@ -509,6 +539,405 @@ app.get('/api/businesses/:businessId/settings',
     );
 
     return res.json({ settings });
+  })
+);
+
+// -----------------------------------------------------------------------------
+// Expenses
+// -----------------------------------------------------------------------------
+
+app.get('/api/expenses/categories', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    return res.json({
+      categories: await expenseService.getExpenseCategories(Number(req.businessId)),
+    });
+  })
+);
+
+app.post('/api/expenses/categories', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const category = await expenseService.createExpenseCategory({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        name: req.body?.name,
+      });
+      return res.status(201).json({ category });
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.put('/api/expenses/categories/:categoryId(\\d+)',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const category = await expenseService.updateExpenseCategory({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        categoryId: Number(req.params.categoryId),
+        name: req.body?.name,
+        isActive: req.body?.isActive,
+      });
+      return res.json({ category });
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/expenses/suppliers', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    return res.json({
+      suppliers: await expenseService.getExpenseSuppliers(Number(req.businessId)),
+    });
+  })
+);
+
+app.post('/api/expenses/suppliers', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const supplier = await expenseService.createExpenseSupplier({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        payload: req.body || {},
+      });
+      return res.status(201).json({ supplier });
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/expenses/summary', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    return res.json({
+      summary: await expenseService.getExpenseSummary(Number(req.businessId)),
+    });
+  })
+);
+
+app.get('/api/expenses/recurring', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    return res.json({
+      recurringExpenses: await expenseService.getRecurringExpenses(
+        Number(req.businessId)
+      ),
+    });
+  })
+);
+
+app.post('/api/expenses/recurring', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const recurringExpense = await expenseService.createRecurringExpense({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        payload: req.body || {},
+      });
+      return res.status(201).json({ recurringExpense });
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.put('/api/expenses/recurring/:recurringId(\\d+)',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const recurringExpense = await expenseService.updateRecurringExpense({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        recurringId: Number(req.params.recurringId),
+        payload: req.body || {},
+      });
+      return res.json({ recurringExpense });
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/expenses/recurring/generate',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await expenseService.generateDueRecurringExpenses({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+      });
+      return res.json(result);
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/expenses', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await expenseService.listExpenses(
+        Number(req.businessId),
+        req.query
+      ));
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/expenses', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const expense = await expenseService.createExpense({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        payload: req.body || {},
+      });
+      return res.status(201).json({ expense });
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/expenses/:expenseId(\\d+)', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    const expense = await expenseService.getExpenseDetails(
+      Number(req.businessId),
+      Number(req.params.expenseId)
+    );
+    if (!expense) return res.status(404).json({ error: 'Expense not found' });
+    return res.json({ expense });
+  })
+);
+
+app.put('/api/expenses/:expenseId(\\d+)', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const expense = await expenseService.updateExpense({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        expenseId: Number(req.params.expenseId),
+        payload: req.body || {},
+      });
+      return res.json({ expense });
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.delete('/api/expenses/:expenseId(\\d+)', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const expense = await expenseService.cancelExpense({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        expenseId: Number(req.params.expenseId),
+      });
+      return res.json({ expense });
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/expenses/:expenseId(\\d+)/payments',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    const payments = await expenseService.getExpensePayments(
+      Number(req.businessId),
+      Number(req.params.expenseId)
+    );
+    if (!payments) return res.status(404).json({ error: 'Expense not found' });
+    return res.json({ payments });
+  })
+);
+
+app.post('/api/expenses/:expenseId(\\d+)/payments',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await expenseService.recordExpensePayment({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        expenseId: Number(req.params.expenseId),
+        payload: req.body || {},
+        idempotencyKey: req.get('Idempotency-Key'),
+      });
+      return res.status(result.replayed ? 200 : 201).json(result);
+    } catch (error) {
+      const response = handleExpenseError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+// -----------------------------------------------------------------------------
+// Reports
+// -----------------------------------------------------------------------------
+
+function getReportFilters(query) {
+  return {
+    period: query.period,
+    startDate: query.startDate,
+    endDate: query.endDate,
+  };
+}
+
+function handleReportError(error, res) {
+  if (error.message === 'INVALID_DATE_RANGE') {
+    return res.status(400).json({ error: 'Invalid reporting date range' });
+  }
+  if (error.message === 'INVALID_REPORT_TYPE') {
+    return res.status(400).json({ error: 'Invalid report type' });
+  }
+  if (error.message === 'INVALID_BUSINESS') {
+    return res.status(404).json({ error: 'Business not found' });
+  }
+  return null;
+}
+
+app.get('/api/reports/overview', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await reportsService.getReportsOverview(
+        Number(req.businessId),
+        getReportFilters(req.query)
+      ));
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/reports/sales', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await reportsService.getSalesReport(
+        Number(req.businessId),
+        getReportFilters(req.query)
+      ));
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/reports/expenses', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await reportsService.getExpensesReport(
+        Number(req.businessId),
+        getReportFilters(req.query)
+      ));
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/reports/inventory', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await reportsService.getInventoryReport(
+        Number(req.businessId),
+        getReportFilters(req.query)
+      ));
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/reports/customers', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await reportsService.getCustomersReport(
+        Number(req.businessId),
+        getReportFilters(req.query)
+      ));
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/reports/activity', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await reportsService.getActivityReport(
+        Number(req.businessId),
+        getReportFilters(req.query)
+      ));
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/reports/:type(sales|expenses|inventory|customers|profit-loss|activity).csv',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const csv = await reportsService.exportReportCsv(
+        Number(req.businessId),
+        req.params.type,
+        getReportFilters(req.query)
+      );
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="workflowos-${req.params.type}-report.csv"`
+      );
+      return res.send(`\uFEFF${csv}`);
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
   })
 );
 
@@ -1219,6 +1648,8 @@ app.post('/api/logout', requireAuth,
 // -----------------------------------------------------------------------------
 // Frontend fallback
 // -----------------------------------------------------------------------------
+
+app.use('/api', (req, res) => res.status(404).json({ error: 'API endpoint not found' }));
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

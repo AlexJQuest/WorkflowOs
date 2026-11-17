@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const db = require('./database');
 const { normalizeBarcode } = require('./barcodes');
+const { calculateSaleTotals } = require('./sales-calculations');
 // -----------------------------------------------------------------------------
 // DATABASE HELPERS
 // -----------------------------------------------------------------------------
@@ -1116,19 +1117,19 @@ async function createSale({
         });
       }
 
-      const subtotalCents = items.reduce(
-        (sum, item) => sum + item.lineTotalCents,
-        0
+      const {
+        subtotalCents,
+        discountCents,
+        taxCents,
+        totalCents,
+        lineDiscountsCents,
+      } = calculateSaleTotals(
+        items.map((item) => item.lineTotalCents),
+        {
+          discountCents: payload.discountCents ?? 0,
+          taxCents: payload.taxCents ?? 0,
+        }
       );
-
-      if (
-        !items.every((item) =>
-          Number.isSafeInteger(item.lineTotalCents)
-        ) ||
-        !Number.isSafeInteger(subtotalCents)
-      ) {
-        throw new Error('INVALID_SALE');
-      }
 
       const now = new Date();
       const reference = `WOS-${crypto.randomUUID()}`;
@@ -1149,14 +1150,16 @@ async function createSale({
            created_at,
            updated_at
          )
-         VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, 'completed', ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)`,
         [
           businessId,
           customerId,
           reference,
           idempotencyKey || null,
           subtotalCents,
-          subtotalCents,
+          discountCents,
+          taxCents,
+          totalCents,
           payload.paymentMethod || null,
           now,
           now,
@@ -1166,7 +1169,7 @@ async function createSale({
 
       const saleId = saleResult.insertId;
 
-      for (const item of items) {
+      for (const [itemIndex, item] of items.entries()) {
         await execute(
           `INSERT INTO sale_items
            (
@@ -1177,9 +1180,10 @@ async function createSale({
              quantity,
              unit_price_cents,
              unit_cost_cents,
-             line_total_cents
+             line_total_cents,
+             discount_cents
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             saleId,
             item.product.id,
@@ -1189,6 +1193,7 @@ async function createSale({
             item.product.price_cents,
             item.unitCostCents,
             item.lineTotalCents,
+            lineDiscountsCents[itemIndex],
           ],
           connection
         );

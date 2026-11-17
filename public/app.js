@@ -7,6 +7,11 @@ let currentGranularity = 'daily';
 let currentView = 'dashboard';
 let customStartDate = '';
 let customEndDate = '';
+let expenseFilters = new URLSearchParams();
+let reportPeriod = 'month';
+let reportStartDate = '';
+let reportEndDate = '';
+let reportType = 'sales';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -15,9 +20,9 @@ const navItems = [
   { id: 'inventory', label: 'Inventory & Stock', icon: '▤' },
   { id: 'customers', label: 'Customers', icon: '◎' },
   { id: 'loyalty', label: 'Loyalty & Memberships', icon: '✳', planned: true },
-  { id: 'expenses', label: 'Expenses', icon: '−', planned: true },
+  { id: 'expenses', label: 'Expenses', icon: '−' },
   { id: 'insights', label: 'Business Insights / AI Coach', icon: '✧', planned: true },
-  { id: 'reports', label: 'Reports', icon: '▥', planned: true },
+  { id: 'reports', label: 'Reports', icon: '▥' },
   { id: 'integrations', label: 'Integrations', icon: '⌘', planned: true },
   { id: 'settings', label: 'Business Settings', icon: '⚙' },
 ];
@@ -54,7 +59,10 @@ async function api(url, options = {}) {
     clearSession();
     throw new Error('Your session expired. Please sign in again.');
   }
-  const body = await response.json().catch(() => ({}));
+  if (!response.headers.get('content-type')?.includes('application/json')) {
+    throw new Error('The server returned an unexpected response. Restart WorkflowOS and refresh this page.');
+  }
+  const body = await response.json();
   if (!response.ok) throw new Error(body.error || 'The request could not be completed.');
   return body;
 }
@@ -357,6 +365,8 @@ async function renderView(view) {
     if (view === 'customers') return await renderCustomers(content);
     if (view === 'inventory') return await renderInventory(content);
     if (view === 'sales') return await renderSales(content);
+    if (view === 'expenses') return await renderExpenses(content);
+    if (view === 'reports') return await renderReports(content);
     if (view === 'settings') return await renderSettings(content);
     content.innerHTML = '<div class="empty-state"><h2>Module not available</h2><p>This area is not included in the current local prototype.</p></div>';
   } catch (error) {
@@ -383,6 +393,9 @@ async function renderDashboard(content) {
   }
   dashboardData = await api(`/api/dashboard?${query}`);
   const data = dashboardData;
+  if (!data.summary?.expenses) {
+    throw new Error('The server is out of date. Restart WorkflowOS and refresh this page.');
+  }
   const summary = data.summary;
   const today = summary.today;
   const currency = data.business.currency;
@@ -397,7 +410,7 @@ async function renderDashboard(content) {
       ${kpiCard('R', 'Today’s revenue', money(today.revenueCents, currency), 'Completed sales · business local time', changeMetric(today.revenueChangePct, 'vs yesterday'), 'icon-green')}
       ${kpiCard('↗', 'Transactions', String(today.transactionCount), `Average ${money(today.averageTransactionCents, currency)} per sale`, changeMetric(today.transactionChangePct, 'vs yesterday'), 'icon-blue')}
       ${kpiCard('▦', 'Items sold', String(today.itemsSold), `${today.uniqueProductsSold} unique product${today.uniqueProductsSold === 1 ? '' : 's'}`, changeMetric(today.itemsSoldChangePct, 'vs yesterday'), 'icon-violet')}
-      ${kpiCard('⌁', 'Gross profit', money(today.grossProfitCents, currency), today.grossProfitComplete ? `${today.grossProfitMarginPct ?? 0}% margin` : 'Partial — some product costs missing', today.grossProfitComplete ? '' : '<span class="metric-change neutral">Cost data incomplete</span>', 'icon-amber')}
+      ${kpiCard('⌁', 'Gross profit', money(today.grossProfitCents, currency), today.grossProfitComplete ? `${today.grossProfitMarginPct ?? 0}% margin` : 'Estimate — missing sale-time costs treated as zero', today.grossProfitComplete ? '' : '<span class="metric-change neutral">Cost data incomplete</span>', 'icon-amber')}
       ${kpiCard('◎', 'Customers', String(summary.customers.total), `+${summary.customers.newToday} new · ${summary.customers.returningToday} returning today`, '', 'icon-teal')}
       ${kpiCard('!', 'Stock attention', String(summary.inventory.lowStockCount + summary.inventory.outOfStockCount), `${summary.inventory.lowStockCount} low · ${summary.inventory.outOfStockCount} out of stock`, '<button class="text-link" data-view="inventory">View stock →</button>', 'icon-red')}
     </section>
@@ -406,7 +419,7 @@ async function renderDashboard(content) {
       ${currentPeriod === 'custom' ? `<form class="custom-range" id="custom-range"><label>From<input type="date" name="startDate" value="${escapeHtml(customStartDate)}" required /></label><label>To<input type="date" name="endDate" value="${escapeHtml(customEndDate)}" required /></label><button class="button button-secondary" type="submit">Apply dates</button></form>` : ''}
       ${data.trends.some((point) => point.revenueCents > 0) ? `<div class="chart-total">${money(data.periodComparison.revenueCents, currency)}<span>in selected period</span>${changeMetric(data.periodComparison.changePct, 'vs previous period')}</div><div class="revenue-chart" role="img" aria-label="Revenue chart">${data.trends.map((point) => `<div class="chart-column"><div class="chart-bar-wrap"><div class="chart-bar ${point.revenueCents ? '' : 'zero'}" style="height:${Math.max(point.revenueCents ? 6 : 0, (point.revenueCents / maxRevenue) * 100)}%" title="${escapeHtml(point.date)}: ${money(point.revenueCents, currency)}"></div></div><span class="chart-value">${point.revenueCents ? money(point.revenueCents, currency) : '—'}</span><span class="chart-label">${escapeHtml(point.date.slice(5))}</span></div>`).join('')}</div>` : '<div class="chart-empty"><span class="empty-chart-icon">⌁</span><strong>No completed sales in this period</strong><span>Record a sale to see revenue trends here.</span></div>'}</article>
       <article class="panel best-panel"><div class="panel-heading"><div><h2>Best-selling products</h2><p>Ranked by units sold</p></div><span class="period-chip">${periodOptions.find(([value]) => value === currentPeriod)?.[1] || 'Custom range'}</span></div>
-        ${data.bestSellers.length ? `<div class="best-list">${data.bestSellers.map((product, index) => `<div class="best-row"><span class="rank-badge ${index === 0 ? 'rank-first' : ''}">${String(index + 1).padStart(2, '0')}</span><span class="product-initial">${escapeHtml(product.name.slice(0, 1).toUpperCase())}</span><span class="best-product"><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.category || 'Uncategorised')} · ${money(product.revenueCents, currency)}${product.grossProfitComplete ? ` · ${money(product.grossProfitCents, currency)} profit` : ' · profit incomplete'}</small></span><span class="best-units"><strong>${product.quantitySold}</strong><small>sold</small></span></div>`).join('')}</div>` : '<div class="mini-empty">No product sales in this period yet.</div>'}
+        ${data.bestSellers.length ? `<div class="best-list">${data.bestSellers.map((product, index) => `<div class="best-row"><span class="rank-badge ${index === 0 ? 'rank-first' : ''}">${String(index + 1).padStart(2, '0')}</span><span class="product-initial">${escapeHtml(product.name.slice(0, 1).toUpperCase())}</span><span class="best-product"><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.category || 'Uncategorised')} · ${money(product.revenueCents, currency)} · ${money(product.grossProfitCents, currency)} ${product.grossProfitComplete ? 'profit' : 'estimated profit (missing costs treated as zero)'}</small></span><span class="best-units"><strong>${product.quantitySold}</strong><small>sold</small></span></div>`).join('')}</div>` : '<div class="mini-empty">No product sales in this period yet.</div>'}
       </article>
     </section>
     <section class="dashboard-grid lower-grid">
@@ -418,6 +431,7 @@ async function renderDashboard(content) {
         ${data.insights.bestCategory ? `<div class="insight-row"><span class="insight-icon insight-purple">◇</span><span><strong>Leading category</strong><small>${escapeHtml(data.insights.bestCategory.name)} · ${money(data.insights.bestCategory.revenueCents, currency)} revenue</small></span></div>` : `<div class="insight-row"><span class="insight-icon insight-purple">◇</span><span><strong>Leading category</strong><small>Category sales will appear after your first sale.</small></span></div>`}
         <div class="insight-row"><span class="insight-icon insight-amber">!</span><span><strong>Stock to review</strong><small>${summary.inventory.lowStockCount + summary.inventory.outOfStockCount} product${summary.inventory.lowStockCount + summary.inventory.outOfStockCount === 1 ? '' : 's'} need attention · <button class="inline-link" data-view="inventory">Review inventory</button></small></span></div>
         <div class="insight-row"><span class="insight-icon insight-blue">◎</span><span><strong>Customer base</strong><small>${summary.customers.newToday} new customers added today</small></span></div>
+        <div class="insight-row"><span class="insight-icon insight-amber">−</span><span><strong>Expenses this month</strong><small>${money(summary.expenses.monthToDateCents, currency)} recorded · ${money(summary.expenses.outstandingCents, currency)} outstanding · ${summary.expenses.overdueCount} overdue · <button class="inline-link" data-view="expenses">Review expenses</button></small></span></div>
       </div></article>
     </section>
     <div class="dashboard-footnote">Metrics use completed sales recorded in ${escapeHtml(data.business.timezone)}. Profit is based on sale-time cost snapshots; estimates are marked when costs are missing.</div>`;
@@ -443,6 +457,464 @@ async function renderDashboard(content) {
   document.getElementById('dashboard-refresh').addEventListener('click', () => renderView('dashboard'));
   document.getElementById('quick-sale')?.addEventListener('click', () => { currentView = 'sales'; renderShell(); renderView('sales'); });
   document.getElementById('empty-sale')?.addEventListener('click', () => { currentView = 'sales'; renderShell(); renderView('sales'); });
+}
+
+let expensePage = 1;
+
+function centsFromInput(value) {
+  if (value === '') return 0;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  const cents = Math.round(amount * 100);
+  return Number.isSafeInteger(cents) && Math.abs(amount * 100 - cents) < 0.000001
+    ? cents
+    : null;
+}
+
+function expenseDateForPeriod(period) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: sessionInfo.business.timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const dateParts = Object.fromEntries(
+    parts.filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, Number(part.value)])
+  );
+  const today = `${dateParts.year}-${String(dateParts.month).padStart(2, '0')}-${String(dateParts.day).padStart(2, '0')}`;
+  const date = new Date(`${today}T00:00:00.000Z`);
+  const addDays = (value, days) => {
+    const result = new Date(`${value}T00:00:00.000Z`);
+    result.setUTCDate(result.getUTCDate() + days);
+    return result.toISOString().slice(0, 10);
+  };
+
+  if (period === 'today') return [today, today];
+  if (period === 'week') {
+    const weekday = date.getUTCDay();
+    const start = addDays(today, -((weekday + 6) % 7));
+    return [start, today];
+  }
+  if (period === 'month') return [`${today.slice(0, 7)}-01`, today];
+  if (period === 'last-month') {
+    date.setUTCDate(1);
+    date.setUTCMonth(date.getUTCMonth() - 1);
+    const start = date.toISOString().slice(0, 10);
+    date.setUTCMonth(date.getUTCMonth() + 1);
+    date.setUTCDate(0);
+    return [start, date.toISOString().slice(0, 10)];
+  }
+  if (period === 'quarter') return [addDays(today, -89), today];
+  if (period === 'year') return [`${today.slice(0, 4)}-01-01`, today];
+  return ['', ''];
+}
+
+async function renderExpenses(content) {
+  const query = new URLSearchParams(expenseFilters);
+  query.set('page', String(expensePage));
+  query.set('pageSize', '20');
+  const [list, summaryResponse, categoriesResponse, suppliersResponse, recurringResponse] = await Promise.all([
+    api(`/api/expenses?${query}`),
+    api('/api/expenses/summary'),
+    api('/api/expenses/categories'),
+    api('/api/expenses/suppliers'),
+    api('/api/expenses/recurring'),
+  ]);
+  const summary = summaryResponse.summary;
+  const categories = categoriesResponse.categories;
+  const suppliers = suppliersResponse.suppliers;
+  const recurringExpenses = recurringResponse.recurringExpenses;
+  if (!Array.isArray(list.expenses) || !summaryResponse.summary ||
+      !Array.isArray(categories) || !Array.isArray(suppliers) ||
+      !Array.isArray(recurringExpenses)) {
+    throw new Error('The server returned incomplete expense data. Restart WorkflowOS and refresh this page.');
+  }
+  const currency = sessionInfo.business.currency;
+  const activeCategories = categories.filter((category) => category.is_active);
+
+  content.innerHTML = `
+    <section class="page-heading"><div><span class="eyebrow">FINANCE</span><h1>Expenses</h1><p>Record business spending, track balances and keep payment history.</p></div><div class="heading-actions"><button class="button button-secondary" id="manage-expense-categories">Manage categories</button><button class="button button-primary" id="new-expense">＋ Add expense</button></div></section>
+    <section class="kpi-grid expense-kpis">
+      ${kpiCard('−', 'This month', money(summary.thisMonthCents, currency), `Last month ${money(summary.lastMonthCents, currency)}`, changeMetric(summary.monthChangePct, 'vs last month'), 'icon-red')}
+      ${kpiCard('◎', 'Outstanding', money(summary.outstandingCents, currency), `${summary.overdueCount} overdue expense${summary.overdueCount === 1 ? '' : 's'}`, '', 'icon-amber')}
+      ${kpiCard('✓', 'Paid to date', money(summary.paidCents, currency), 'Recorded expense payments', '', 'icon-green')}
+      ${kpiCard('▦', 'This year', money(summary.thisYearCents, currency), `Average ${money(summary.averageMonthlyCents, currency)} per month`, '', 'icon-blue')}
+      ${kpiCard('↗', 'Largest category', summary.largestCategory ? escapeHtml(summary.largestCategory.name) : '—', summary.largestCategory ? money(summary.largestCategory.amountCents, currency) : 'No expenses recorded', '', 'icon-violet')}
+      ${kpiCard('↻', 'Recurring monthly', money(summary.recurringMonthlyCommitmentsCents, currency), 'Estimated active commitments', '', 'icon-teal')}
+    </section>
+    <section class="panel list-panel"><div class="panel-heading"><div><h2>Expense records</h2><p>${list.total} record${list.total === 1 ? '' : 's'} · totals are stored in cents</p></div></div>
+      <form class="expense-filters" id="expense-filters">
+        <label>Period<select name="period"><option value="">All dates</option><option value="today">Today</option><option value="week">This week</option><option value="month">This month</option><option value="last-month">Last month</option><option value="quarter">Last 3 months</option><option value="year">This year</option><option value="custom">Custom range</option></select></label>
+        <label>From<input type="date" name="startDate" value="${escapeHtml(expenseFilters.get('startDate') || '')}" /></label><label>To<input type="date" name="endDate" value="${escapeHtml(expenseFilters.get('endDate') || '')}" /></label>
+        <label>Status<select name="status"><option value="">All active</option><option value="unpaid" ${expenseFilters.get('status') === 'unpaid' ? 'selected' : ''}>Unpaid</option><option value="partially_paid" ${expenseFilters.get('status') === 'partially_paid' ? 'selected' : ''}>Partially paid</option><option value="paid" ${expenseFilters.get('status') === 'paid' ? 'selected' : ''}>Paid</option><option value="overdue" ${expenseFilters.get('status') === 'overdue' ? 'selected' : ''}>Overdue</option><option value="draft" ${expenseFilters.get('status') === 'draft' ? 'selected' : ''}>Draft</option></select></label>
+        <label>Search<input name="search" value="${escapeHtml(expenseFilters.get('search') || '')}" placeholder="Title, supplier or reference" /></label>
+        <button class="button button-secondary" type="submit">Apply filters</button>
+      </form>
+      <div id="expense-editor" class="expense-editor hidden"></div>
+      ${list.expenses.length ? `<div class="table-scroll"><table><thead><tr><th>Expense</th><th>Date</th><th>Category</th><th>Supplier</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody>${list.expenses.map((expense) => `<tr><td><strong>${escapeHtml(expense.title)}</strong><small>${escapeHtml(expense.reference_number || '')}</small></td><td>${escapeHtml(expense.expense_date)}</td><td>${escapeHtml(expense.category_name || 'Uncategorised')}</td><td>${escapeHtml(expense.supplier_name || '—')}</td><td><strong>${money(expense.total_cents, currency)}</strong></td><td>${money(expense.paid_cents, currency)}</td><td>${money(expense.outstanding_cents, currency)}</td><td><span class="status-pill status-${escapeHtml(expense.status)}">${escapeHtml(expense.status.replace('_', ' '))}</span></td><td><div class="expense-row-actions"><button class="text-link expense-details" data-id="${expense.id}">Details</button>${expense.status !== 'paid' && expense.status !== 'cancelled' && expense.status !== 'draft' ? `<button class="text-link expense-pay" data-id="${expense.id}">Record payment</button>` : ''}${expense.status !== 'paid' && expense.status !== 'cancelled' ? `<button class="text-link expense-edit" data-id="${expense.id}">Edit</button>` : ''}${expense.paid_cents === 0 && expense.status !== 'cancelled' ? `<button class="text-link expense-cancel" data-id="${expense.id}">Cancel</button>` : ''}</div></td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No expenses found</strong><span>Add an expense or adjust your filters.</span></div>'}
+      <div class="expense-pagination"><button class="button button-secondary" id="expense-prev" ${list.page <= 1 ? 'disabled' : ''}>Previous</button><span>Page ${list.page} of ${Math.max(1, Math.ceil(list.total / list.pageSize))}</span><button class="button button-secondary" id="expense-next" ${list.page * list.pageSize >= list.total ? 'disabled' : ''}>Next</button></div>
+    </section>
+    <section class="dashboard-grid lower-grid">
+      <article class="panel"><div class="panel-heading"><div><h2>Spending by category</h2><p>All recorded expenses, excluding drafts and cancellations</p></div></div>${summary.expensesByCategory.length ? `<div class="best-list">${summary.expensesByCategory.slice(0, 8).map((item) => `<div class="best-row"><span class="product-initial">−</span><span class="best-product"><strong>${escapeHtml(item.name)}</strong></span><strong>${money(item.amountCents, currency)}</strong></div>`).join('')}</div>` : '<div class="mini-empty">Category totals appear when expenses are recorded.</div>'}</article>
+      <article class="panel"><div class="panel-heading"><div><h2>Categories & suppliers</h2><p>Both lists are private to this business</p></div></div><form id="expense-category-form" class="compact-form"><input name="name" placeholder="New category name" maxlength="100" required /><button class="button button-secondary" type="submit">Add category</button></form><form id="expense-supplier-form" class="compact-form"><input name="name" placeholder="New supplier name" maxlength="191" required /><input name="email" type="email" placeholder="Email (optional)" /><button class="button button-secondary" type="submit">Add supplier</button></form><div class="category-list">${categories.map((category) => `<div><span>${escapeHtml(category.name)}${category.is_system ? ' · default' : ''}</span>${category.is_active && !category.is_system ? `<button class="text-link category-deactivate" data-id="${category.id}">Deactivate</button>` : ''}</div>`).join('')}</div><p class="form-help">Receipt uploads are unavailable until private file storage is configured; no files are exposed publicly.</p></article>
+    </section>
+    <section class="panel list-panel recurring-panel"><div class="panel-heading"><div><h2>Recurring expenses</h2><p>Due occurrences are created at most once and keep their original scheduled date.</p></div><button class="button button-secondary" id="generate-recurring">Generate due expenses</button></div><div id="recurring-feedback" class="inline-feedback"></div>
+      <form id="recurring-expense-form" class="record-form">
+        <label>Title<input name="title" maxlength="191" required /></label>
+        <label>Frequency<select name="frequency"><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="annually">Annually</option></select></label>
+        <label>Category<select name="categoryId"><option value="">Uncategorised</option>${activeCategories.map((category) => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join('')}</select></label>
+        <label>Supplier<select name="supplierId"><option value="">No supplier</option>${suppliers.filter((supplier) => supplier.is_active).map((supplier) => `<option value="${supplier.id}">${escapeHtml(supplier.name)}</option>`).join('')}</select></label>
+        <label>Subtotal (${escapeHtml(currency)})<input name="subtotal" type="number" min="0.01" step="0.01" required /></label>
+        <label>Tax (${escapeHtml(currency)})<input name="tax" type="number" min="0" step="0.01" value="0" /></label>
+        <label>Starts on<input name="startsOn" type="date" value="${escapeHtml(expenseDateForPeriod('today')[0])}" required /></label>
+        <label>Ends on (optional)<input name="endsOn" type="date" /></label>
+        <button class="button button-secondary" type="submit">Add recurring expense</button>
+      </form>
+      ${recurringExpenses.length ? `<div class="table-scroll"><table><thead><tr><th>Expense</th><th>Frequency</th><th>Amount</th><th>Next due</th><th>Status</th><th>Action</th></tr></thead><tbody>${recurringExpenses.map((recurring) => `<tr><td><strong>${escapeHtml(recurring.title)}</strong><small>${escapeHtml(recurring.category_name || 'Uncategorised')}${recurring.supplier_name ? ` · ${escapeHtml(recurring.supplier_name)}` : ''}</small></td><td>${escapeHtml(recurring.frequency)}</td><td>${money(Number(recurring.subtotal_cents) + Number(recurring.tax_cents), currency)}</td><td>${escapeHtml(String(recurring.next_due_date).slice(0, 10))}</td><td><span class="status-pill status-${recurring.is_active ? 'completed' : 'cancelled'}">${recurring.is_active ? 'active' : 'paused'}</span></td><td><button class="text-link recurring-toggle" data-id="${recurring.id}" data-active="${recurring.is_active ? '1' : '0'}">${recurring.is_active ? 'Pause' : 'Resume'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No recurring schedules</strong><span>Add a schedule to record regular expenses on due dates.</span></div>'}
+    </section>
+    <dialog class="expense-dialog" id="expense-details-dialog"></dialog>
+    <dialog class="expense-dialog" id="expense-payment-dialog"></dialog>`;
+
+  document.getElementById('new-expense').addEventListener('click', () => openExpenseEditor());
+  document.getElementById('manage-expense-categories').addEventListener('click', () => {
+    document.getElementById('expense-category-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById('expense-category-form').querySelector('input').focus();
+  });
+  document.getElementById('expense-filters').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (values.period && values.period !== 'custom') {
+      [values.startDate, values.endDate] = expenseDateForPeriod(values.period);
+    }
+    expenseFilters = new URLSearchParams();
+    for (const [key, value] of Object.entries(values)) {
+      if (value && key !== 'period') expenseFilters.set(key, value);
+    }
+    expensePage = 1;
+    renderExpenses(content);
+  });
+  document.getElementById('expense-prev').addEventListener('click', () => { expensePage -= 1; renderExpenses(content); });
+  document.getElementById('expense-next').addEventListener('click', () => { expensePage += 1; renderExpenses(content); });
+
+  content.querySelectorAll('.expense-edit').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const data = await api(`/api/expenses/${button.dataset.id}`);
+      openExpenseEditor(data.expense);
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  content.querySelectorAll('.expense-cancel').forEach((button) => button.addEventListener('click', async () => {
+    if (!confirm('Cancel this unpaid expense? Its record will be retained.')) return;
+    try {
+      await api(`/api/expenses/${button.dataset.id}`, { method: 'DELETE' });
+      await renderExpenses(content);
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  content.querySelectorAll('.expense-details').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const data = (await api(`/api/expenses/${button.dataset.id}`)).expense;
+      const dialog = document.getElementById('expense-details-dialog');
+      dialog.innerHTML = `<form method="dialog" class="dialog-close"><button class="icon-button" aria-label="Close">×</button></form><h2>${escapeHtml(data.title)}</h2><p>${escapeHtml(data.description || 'No description')}</p><dl><div><dt>Category</dt><dd>${escapeHtml(data.category_name || '—')}</dd></div><div><dt>Supplier</dt><dd>${escapeHtml(data.supplier_name || '—')}</dd></div><div><dt>Reference</dt><dd>${escapeHtml(data.reference_number || '—')}</dd></div><div><dt>Date</dt><dd>${escapeHtml(data.expense_date)}</dd></div><div><dt>Total / paid / balance</dt><dd>${money(data.total_cents, currency)} / ${money(data.paid_cents, currency)} / ${money(data.outstanding_cents, currency)}</dd></div></dl><h3>Payment history</h3>${data.payments.length ? `<div class="table-scroll"><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${data.payments.map((payment) => `<tr><td>${escapeHtml(String(payment.payment_date).slice(0, 10))}</td><td>${escapeHtml(payment.payment_method)}</td><td>${escapeHtml(payment.reference || '—')}</td><td>${money(payment.amount_cents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted-copy">No payments recorded.</p>'}`;
+      dialog.showModal();
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  content.querySelectorAll('.expense-pay').forEach((button) => button.addEventListener('click', () => {
+    const expense = list.expenses.find((item) => item.id === Number(button.dataset.id));
+    openExpensePaymentDialog(expense);
+  }));
+  document.getElementById('expense-category-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    try {
+      await api('/api/expenses/categories', {
+        method: 'POST',
+        body: JSON.stringify({ name: new FormData(form).get('name') }),
+      });
+      await renderExpenses(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+    }
+  });
+  document.getElementById('expense-supplier-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    try {
+      await api('/api/expenses/suppliers', {
+        method: 'POST',
+        body: JSON.stringify(Object.fromEntries(new FormData(form).entries())),
+      });
+      await renderExpenses(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+    }
+  });
+  content.querySelectorAll('.category-deactivate').forEach((button) => button.addEventListener('click', async () => {
+    const category = categories.find((item) => item.id === Number(button.dataset.id));
+    if (!category || !confirm(`Deactivate “${category.name}”? Existing expenses will retain this category.`)) return;
+    try {
+      await api(`/api/expenses/categories/${category.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name: category.name, isActive: false }),
+      });
+      await renderExpenses(content);
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  document.getElementById('recurring-expense-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    const subtotalCents = centsFromInput(values.subtotal);
+    const taxCents = centsFromInput(values.tax || '');
+    if (subtotalCents === null || taxCents === null) {
+      showInlineError(form, 'Enter valid amounts with no more than two decimal places.');
+      return;
+    }
+    try {
+      await api('/api/expenses/recurring', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...values,
+          categoryId: values.categoryId || null,
+          supplierId: values.supplierId || null,
+          subtotalCents,
+          taxCents,
+        }),
+      });
+      await renderExpenses(content);
+      const feedback = document.getElementById('recurring-feedback');
+      feedback.textContent = 'Recurring expense saved.';
+      feedback.className = 'inline-feedback success';
+    } catch (error) {
+      showInlineError(form, error.message);
+    }
+  });
+  document.getElementById('generate-recurring').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await api('/api/expenses/recurring/generate', { method: 'POST' });
+      await renderExpenses(content);
+      const feedback = document.getElementById('recurring-feedback');
+      feedback.textContent = `${result.createdCount} due expense${result.createdCount === 1 ? '' : 's'} generated for ${result.checkedAt}.`;
+      feedback.className = 'inline-feedback success';
+    } catch (error) {
+      showInlineError(document.getElementById('recurring-feedback'), error.message);
+      button.disabled = false;
+    }
+  });
+  content.querySelectorAll('.recurring-toggle').forEach((button) => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      await api(`/api/expenses/recurring/${button.dataset.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ isActive: button.dataset.active !== '1' }),
+      });
+      await renderExpenses(content);
+    } catch (error) {
+      button.disabled = false;
+      showInlineError(button.closest('td'), error.message);
+    }
+  }));
+
+  function openExpenseEditor(expense = null) {
+    const editor = document.getElementById('expense-editor');
+    editor.classList.remove('hidden');
+    editor.innerHTML = `<div class="panel-heading"><div><h2>${expense ? 'Edit expense' : 'New expense'}</h2><p>Amounts are entered in ${escapeHtml(currency)} and saved as cents.</p></div><button class="text-link" id="close-expense-editor">Close</button></div><form id="expense-form" class="record-form"><label>Title<input name="title" maxlength="191" value="${escapeHtml(expense?.title || '')}" required /></label><label>Category<select name="categoryId"><option value="">Uncategorised</option>${activeCategories.map((category) => `<option value="${category.id}" ${expense?.category_id === category.id ? 'selected' : ''}>${escapeHtml(category.name)}</option>`).join('')}</select></label><label>Supplier<select name="supplierId"><option value="">No supplier</option>${suppliers.filter((supplier) => supplier.is_active).map((supplier) => `<option value="${supplier.id}" ${expense?.supplier_id === supplier.id ? 'selected' : ''}>${escapeHtml(supplier.name)}</option>`).join('')}</select></label><label>Reference<input name="referenceNumber" maxlength="100" value="${escapeHtml(expense?.reference_number || '')}" /></label><label>Expense date<input name="expenseDate" type="date" value="${escapeHtml(expense?.expense_date || expenseDateForPeriod('today')[0])}" required /></label><label>Due date<input name="dueDate" type="date" value="${escapeHtml(expense?.due_date || '')}" /></label><label>Subtotal (${escapeHtml(currency)})<input name="subtotal" type="number" min="0.01" step="0.01" value="${expense ? (expense.subtotal_cents / 100).toFixed(2) : ''}" ${expense?.paid_cents ? 'readonly' : ''} required /></label><label>Tax (${escapeHtml(currency)})<input name="tax" type="number" min="0" step="0.01" value="${expense ? (expense.tax_cents / 100).toFixed(2) : '0.00'}" ${expense?.paid_cents ? 'readonly' : ''} /></label><label>Status<select name="status" ${expense?.paid_cents ? 'disabled' : ''}><option value="unpaid" ${expense?.status !== 'draft' ? 'selected' : ''}>Unpaid</option><option value="draft" ${expense?.status === 'draft' ? 'selected' : ''}>Draft</option></select></label><label class="span-two">Description<textarea name="description">${escapeHtml(expense?.description || '')}</textarea></label><label class="span-two">Notes<textarea name="notes">${escapeHtml(expense?.notes || '')}</textarea></label><div class="expense-form-actions"><button class="button button-primary" type="submit">${expense ? 'Save changes' : 'Save expense'}</button><button class="button button-secondary" type="button" id="cancel-expense-editor">Cancel</button></div></form>`;
+    editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('close-expense-editor').addEventListener('click', () => editor.classList.add('hidden'));
+    document.getElementById('cancel-expense-editor').addEventListener('click', () => editor.classList.add('hidden'));
+    document.getElementById('expense-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const values = Object.fromEntries(new FormData(form).entries());
+      const subtotalCents = centsFromInput(values.subtotal);
+      const taxCents = centsFromInput(values.tax || '');
+      if (subtotalCents === null || taxCents === null) {
+        showInlineError(form, 'Enter valid amounts with no more than two decimal places.');
+        return;
+      }
+      const payload = {
+        title: values.title,
+        categoryId: values.categoryId || null,
+        supplierId: values.supplierId || null,
+        referenceNumber: values.referenceNumber,
+        expenseDate: values.expenseDate,
+        dueDate: values.dueDate || null,
+        subtotalCents,
+        taxCents,
+        status: expense?.paid_cents ? undefined : values.status || 'unpaid',
+        description: values.description,
+        notes: values.notes,
+      };
+      try {
+        await api(expense ? `/api/expenses/${expense.id}` : '/api/expenses', {
+          method: expense ? 'PUT' : 'POST',
+          body: JSON.stringify(payload),
+        });
+        await renderExpenses(content);
+      } catch (error) {
+        showInlineError(form, error.message);
+      }
+    });
+  }
+
+  function openExpensePaymentDialog(expense) {
+    const dialog = document.getElementById('expense-payment-dialog');
+    dialog.innerHTML = `<form method="dialog" class="dialog-close"><button class="icon-button" aria-label="Close">×</button></form><h2>Record payment</h2><p>${escapeHtml(expense.title)} · balance ${money(expense.outstanding_cents, currency)}</p><form id="expense-payment-form" class="record-form"><label>Amount (${escapeHtml(currency)})<input name="amount" type="number" min="0.01" max="${(expense.outstanding_cents / 100).toFixed(2)}" step="0.01" required /></label><label>Date<input name="paymentDate" type="date" value="${escapeHtml(expenseDateForPeriod('today')[0])}" required /></label><label>Method<select name="paymentMethod"><option value="cash">Cash</option><option value="card">Card</option><option value="eft">EFT</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></select></label><label>Reference<input name="reference" maxlength="100" /></label><label class="span-two">Notes<textarea name="notes"></textarea></label><button class="button button-primary" type="submit">Save payment</button></form>`;
+    dialog.showModal();
+    document.getElementById('expense-payment-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const values = Object.fromEntries(new FormData(form).entries());
+      const amountCents = centsFromInput(values.amount);
+      if (amountCents === null || amountCents > expense.outstanding_cents) {
+        showInlineError(form, 'Payment must be a valid amount no greater than the outstanding balance.');
+        return;
+      }
+      try {
+        await api(`/api/expenses/${expense.id}/payments`, {
+          method: 'POST',
+          headers: { 'Idempotency-Key': crypto.randomUUID() },
+          body: JSON.stringify({ ...values, amountCents }),
+        });
+        dialog.close();
+        await renderExpenses(content);
+      } catch (error) {
+        showInlineError(form, error.message);
+      }
+    });
+  }
+}
+
+async function renderReports(content) {
+  const query = new URLSearchParams({ period: reportPeriod });
+  if (reportPeriod === 'custom') {
+    if (reportStartDate) query.set('startDate', reportStartDate);
+    if (reportEndDate) query.set('endDate', reportEndDate);
+  }
+  const rangeQuery = query.toString();
+  const [overview, report] = await Promise.all([
+    api(`/api/reports/overview?${rangeQuery}`),
+    reportType === 'profit-loss' ? Promise.resolve(null) : api(`/api/reports/${reportType}?${rangeQuery}`),
+  ]);
+  const currency = sessionInfo.business.currency;
+  const range = overview.range;
+  const periodOptions = [
+    ['today', 'Today'],
+    ['week', 'This week'],
+    ['month', 'This month'],
+    ['last-month', 'Last month'],
+    ['quarter', 'Last 90 days'],
+    ['year', 'Year to date'],
+    ['custom', 'Custom range'],
+  ];
+  const exportHref = `/api/reports/${reportType}.csv?${rangeQuery}`;
+  let reportContent = '';
+
+  if (reportType === 'sales') {
+    const maxRevenue = Math.max(1, ...report.daily.map((row) => row.revenueCents));
+    reportContent = `<section class="panel report-panel"><div class="panel-heading"><div><h2>Daily sales</h2><p>Revenue excludes tax and discounts; only completed sales are included.</p></div></div>${report.daily.length ? `<div class="report-bars">${report.daily.map((row) => `<div class="report-bar-row"><span>${escapeHtml(row.date)}</span><div class="report-bar-track"><i style="width:${Math.max(1, row.revenueCents / maxRevenue * 100)}%"></i></div><strong>${money(row.revenueCents, currency)}</strong><small>${row.transactionCount} sale${row.transactionCount === 1 ? '' : 's'}</small></div>`).join('')}</div>` : '<div class="mini-empty">No sales recorded in this period.</div>'}</section>
+      <section class="dashboard-grid lower-grid"><article class="panel report-panel"><div class="panel-heading"><div><h2>Top products</h2><p>Ranked by units sold</p></div></div>${report.products.length ? `<div class="table-scroll"><table><thead><tr><th>Product</th><th>Units</th><th>Revenue</th></tr></thead><tbody>${report.products.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${row.quantitySold}</td><td>${money(row.revenueCents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No product sales in this period.</div>'}</article>
+      <article class="panel report-panel"><div class="panel-heading"><div><h2>Sales by category</h2><p>Revenue by product category</p></div></div>${report.categories.length ? `<div class="best-list">${report.categories.map((row) => `<div class="best-row"><span class="product-initial">◇</span><span class="best-product"><strong>${escapeHtml(row.name)}</strong><small>${row.quantitySold} units</small></span><strong>${money(row.revenueCents, currency)}</strong></div>`).join('')}</div>` : '<div class="mini-empty">No category sales in this period.</div>'}</article></section>
+      <section class="panel report-panel"><div class="panel-heading"><div><h2>Sales by payment method</h2><p>Completed transactions only</p></div></div>${report.paymentMethods.length ? `<div class="table-scroll"><table><thead><tr><th>Payment method</th><th>Transactions</th><th>Revenue</th></tr></thead><tbody>${report.paymentMethods.map((row) => `<tr><td>${escapeHtml(row.paymentMethod)}</td><td>${row.transactionCount}</td><td>${money(row.revenueCents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No payment data in this period.</div>'}</section>`;
+  } else if (reportType === 'expenses') {
+    reportContent = `<section class="dashboard-grid lower-grid"><article class="panel report-panel"><div class="panel-heading"><div><h2>Spending by category</h2><p>Drafts and cancellations are excluded.</p></div></div>${report.categories.length ? `<div class="table-scroll"><table><thead><tr><th>Category</th><th>Records</th><th>Amount</th></tr></thead><tbody>${report.categories.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${row.count}</td><td>${money(row.amountCents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No expenses in this period.</div>'}</article>
+      <article class="panel report-panel"><div class="panel-heading"><div><h2>Spending by supplier</h2><p>Includes expenses without a supplier.</p></div></div>${report.suppliers.length ? `<div class="table-scroll"><table><thead><tr><th>Supplier</th><th>Records</th><th>Amount</th></tr></thead><tbody>${report.suppliers.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${row.count}</td><td>${money(row.amountCents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No expenses in this period.</div>'}</article></section>
+      <section class="panel report-panel"><div class="panel-heading"><div><h2>Expense status</h2><p>Balances use recorded payments.</p></div></div>${report.statuses.length ? `<div class="table-scroll"><table><thead><tr><th>Status</th><th>Records</th><th>Total</th><th>Outstanding</th></tr></thead><tbody>${report.statuses.map((row) => `<tr><td>${escapeHtml(row.status.replace('_', ' '))}</td><td>${row.count}</td><td>${money(row.amountCents, currency)}</td><td>${money(row.outstandingCents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No expense records in this period.</div>'}</section>`;
+  } else if (reportType === 'inventory') {
+    reportContent = `<section class="panel report-panel"><div class="panel-heading"><div><h2>Inventory valuation and stock status</h2><p>Values are based on current quantity and recorded product cost.</p></div></div>${report.products.length ? `<div class="table-scroll"><table><thead><tr><th>Product</th><th>Category</th><th>On hand</th><th>Reorder at</th><th>Value</th><th>Status</th><th>Units sold</th></tr></thead><tbody>${report.products.map((row) => `<tr><td><strong>${escapeHtml(row.name)}</strong></td><td>${escapeHtml(row.category || '—')}</td><td>${row.quantityOnHand}</td><td>${row.reorderLevel}</td><td>${row.inventoryValueCents === null ? 'Cost unknown' : money(row.inventoryValueCents, currency)}</td><td><span class="status-pill status-${row.status === 'in_stock' ? 'completed' : 'overdue'}">${escapeHtml(row.status.replace('_', ' '))}</span></td><td>${row.unitsSold}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No active inventory items.</div>'}</section>`;
+  } else if (reportType === 'profit-loss') {
+    const amount = (value) => value === null ? 'Unavailable — sale-time costs missing' : money(value, currency);
+    reportContent = `<section class="panel report-panel"><div class="panel-heading"><div><h2>Profit and loss estimate</h2><p>Revenue excludes sales tax; recorded expenses include tax. This is not a formal accounting statement.</p></div></div><div class="table-scroll"><table><thead><tr><th>Measure</th><th>Amount</th></tr></thead><tbody><tr><td>Sales revenue</td><td>${amount(overview.revenueCents)}</td></tr><tr><td>Cost of sales</td><td>${amount(overview.cogsCents)}</td></tr><tr><td>Gross profit</td><td>${amount(overview.grossProfitCents)}</td></tr><tr><td>Recorded expenses</td><td>${amount(overview.operatingExpensesCents)}</td></tr><tr><td><strong>Estimated operating result</strong></td><td><strong>${amount(overview.netOperatingResultCents)}</strong></td></tr></tbody></table></div><p class="form-help">Expense totals can include stock purchases already counted in cost of sales, so the estimate may double-count them. Review your records with an accountant.</p></section>`;
+  } else if (reportType === 'activity') {
+    reportContent = `<section class="panel report-panel"><div class="panel-heading"><div><h2>Recorded system activity</h2><p>Inventory movements and expense payments by recording time. This is not a complete audit log; edits and other changes may not be recorded.</p></div></div>${report.truncated ? '<p class="form-help">Showing the latest 500 events. Narrow the date range to see earlier events.</p>' : ''}${report.events.length ? `<div class="table-scroll"><table><thead><tr><th>Recorded at</th><th>Event</th><th>Item</th><th>Details</th></tr></thead><tbody>${report.events.map((row) => `<tr><td>${escapeHtml(dateTime(row.timestamp, sessionInfo.business.timezone))}</td><td>${escapeHtml(row.type)}</td><td>${escapeHtml(row.subject)}</td><td>${escapeHtml(row.detail)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No recorded inventory movements or expense payments in this period.</div>'}</section>`;
+  } else {
+    reportContent = `<section class="panel report-panel"><div class="panel-heading"><div><h2>Customer activity</h2><p>Spend and transaction counts for the selected period.</p></div></div>${report.customers.length ? `<div class="table-scroll"><table><thead><tr><th>Customer</th><th>Email</th><th>Transactions</th><th>Average spend</th><th>Total spend</th><th>Last purchase</th></tr></thead><tbody>${report.customers.map((row) => `<tr><td><strong>${escapeHtml(row.name)}</strong></td><td>${escapeHtml(row.email || '—')}</td><td>${row.transactionCount}</td><td>${money(row.averageSpendCents, currency)}</td><td>${money(row.spendCents, currency)}</td><td>${escapeHtml(row.lastPurchaseAt ? dateTime(row.lastPurchaseAt, sessionInfo.business.timezone) : '—')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No customers found.</div>'}</section>`;
+  }
+
+  content.innerHTML = `
+    <section class="page-heading"><div><span class="eyebrow">BUSINESS PERFORMANCE</span><h1>Reports</h1><p>Review sales, spending, stock and customer activity for ${escapeHtml(overview.business.name)}.</p><div id="report-export-feedback" class="inline-feedback" role="status"></div></div><div class="heading-actions"><button class="button button-secondary" id="report-print" type="button">Print / Save as PDF</button><button class="button button-secondary" id="report-export" type="button">Export CSV</button></div></section>
+    <section class="panel report-controls"><form id="report-filter-form" class="expense-filters">
+      <label>Report<select id="report-type" name="type"><option value="sales" ${reportType === 'sales' ? 'selected' : ''}>Sales</option><option value="expenses" ${reportType === 'expenses' ? 'selected' : ''}>Expenses</option><option value="profit-loss" ${reportType === 'profit-loss' ? 'selected' : ''}>Profit &amp; loss estimate</option><option value="activity" ${reportType === 'activity' ? 'selected' : ''}>System activity</option><option value="inventory" ${reportType === 'inventory' ? 'selected' : ''}>Inventory</option><option value="customers" ${reportType === 'customers' ? 'selected' : ''}>Customers</option></select></label>
+      <label>Period<select id="report-period" name="period">${periodOptions.map(([value, label]) => `<option value="${value}" ${reportPeriod === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      ${reportPeriod === 'custom' ? `<label>From<input type="date" name="startDate" value="${escapeHtml(reportStartDate || range.startDate)}" required /></label><label>To<input type="date" name="endDate" value="${escapeHtml(reportEndDate || range.endDate)}" required /></label>` : ''}
+      ${reportType === 'inventory' ? '<span class="report-range-note">Stock and valuation show current inventory.</span>' : `<span class="report-range-note">Showing ${escapeHtml(range.startDate)} to ${escapeHtml(range.endDate)}</span>`}
+      <button class="button button-secondary" type="submit">Apply</button>
+    </form></section>
+    <section class="kpi-grid report-kpis">
+      ${kpiCard('↗', 'Sales revenue', money(overview.revenueCents, currency), `${overview.transactionCount} completed sales`, '', 'icon-green')}
+      ${kpiCard('−', 'Operating expenses', money(overview.operatingExpensesCents, currency), `${overview.overdueExpenseCount} overdue expense${overview.overdueExpenseCount === 1 ? '' : 's'}`, '', 'icon-red')}
+      ${kpiCard('⌁', 'Gross profit', money(overview.grossProfitCents, currency), overview.costCoverageComplete ? `${overview.grossMarginPct ?? 0}% margin` : `Estimate: ${overview.unknownCostUnits} units have missing costs treated as zero`, '', 'icon-amber')}
+      ${kpiCard('◎', 'Net operating result', money(overview.netOperatingResultCents, currency), overview.costCoverageComplete ? 'Gross profit less recorded expenses' : 'Estimate: missing sale-time costs treated as zero', '', 'icon-blue')}
+      ${kpiCard('▤', 'Stock value', overview.inventory.valuationCents === null ? 'Incomplete' : money(overview.inventory.valuationCents, currency), `${overview.inventory.lowStockCount} low · ${overview.inventory.outOfStockCount} out of stock`, '', 'icon-violet')}
+      ${kpiCard('◎', 'Customers', String(overview.customers.total), `${overview.customers.newInPeriod} new in selected period`, '', 'icon-teal')}
+    </section>
+    <div class="report-caveats">${overview.refundedCount ? `${overview.refundedCount} fully refunded sale(s), totalling ${money(overview.refundedCents, currency)}, are excluded from revenue. ` : ''}${overview.inventory.valuationComplete ? 'Inventory value is unavailable because some products with stock have no recorded cost. Add their costs under Products & Services. ' : ''}${overview.costCoverageComplete ? '' : 'Profit is an estimate: missing sale-time costs are treated as zero and may overstate profit. Adding product costs helps future sales but does not change historical sale snapshots.'}</div>
+    ${reportContent}
+    <p class="form-help">CSV exports are business-scoped and spreadsheet-compatible. Use Print / Save as PDF for a printable report.</p>`;
+  document.getElementById('report-print').addEventListener('click', () => window.print());
+  document.getElementById('report-export').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const feedback = document.getElementById('report-export-feedback');
+    button.disabled = true;
+    feedback.textContent = '';
+    feedback.className = 'inline-feedback';
+    try {
+      const response = await fetch(exportHref, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      if (response.status === 401) {
+        clearSession();
+        renderAuth('Your session expired. Please sign in again.');
+        return;
+      }
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'Report export failed.');
+      }
+      const blob = await response.blob();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `workflowos-${reportType}-report.csv`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (error) {
+      feedback.textContent = error.message;
+      feedback.className = 'inline-feedback error';
+    } finally {
+      button.disabled = false;
+    }
+  });
+  document.getElementById('report-filter-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    reportType = document.getElementById('report-type').value;
+    reportPeriod = document.getElementById('report-period').value;
+    const values = Object.fromEntries(new FormData(form).entries());
+    reportStartDate = values.startDate || '';
+    reportEndDate = values.endDate || '';
+    renderView('reports');
+  });
+  document.getElementById('report-type').addEventListener('change', (event) => {
+    reportType = event.target.value;
+    renderView('reports');
+  });
+  document.getElementById('report-period').addEventListener('change', (event) => {
+    reportPeriod = event.target.value;
+    if (reportPeriod !== 'custom') {
+      reportStartDate = '';
+      reportEndDate = '';
+    }
+    renderView('reports');
+  });
 }
 
 async function getProducts() {
@@ -761,8 +1233,8 @@ async function renderSales(content) {
       <label class="scanner-label">Scan barcode or search products<input id="product-lookup" autocomplete="off" placeholder="Scan barcode, search name or SKU…" aria-describedby="scan-feedback" /><small>Focus stays here after each successful scan.</small></label><div id="scan-feedback" class="scan-feedback" role="status" aria-live="polite"></div><div id="product-search-results" class="product-search-results"></div>
       <div id="selected-product" class="selected-product hidden"></div><button class="button button-primary add-selected-button hidden" id="add-selected-product" type="button">Add selected product</button>
       <div class="cart-heading"><h3>Current sale</h3><span id="cart-count">0 items</span></div><div id="sale-cart" class="sale-cart"><div class="cart-empty">Scan or search for a product to begin.</div></div>
-      <form id="checkout-form" class="checkout-form"><label>Customer<select name="customerId"><option value="">Walk-in customer</option>${customers.customers.map((customer) => `<option value="${customer.id}">${escapeHtml(customer.name)}</option>`).join('')}</select></label><label>Payment method<select name="paymentMethod"><option value="cash">Cash</option><option value="card">Card</option><option value="eft">EFT</option><option value="other">Other</option></select></label><div class="cart-total"><span>Transaction total</span><strong id="cart-total">${money(0, currency)}</strong></div><button class="button button-primary button-wide" type="submit" id="complete-sale" disabled>Record completed sale</button></form>
-      <p class="form-help">This records a transaction stated as already completed; it does not charge or verify a payment. Sale snapshots and stock movements are saved together. Only verified barcode mappings are used for automatic scans.</p>
+      <form id="checkout-form" class="checkout-form"><label>Customer<select name="customerId"><option value="">Walk-in customer</option>${customers.customers.map((customer) => `<option value="${customer.id}">${escapeHtml(customer.name)}</option>`).join('')}</select></label><label>Payment method<select name="paymentMethod"><option value="cash">Cash</option><option value="card">Card</option><option value="eft">EFT</option><option value="other">Other</option></select></label><label>Discount amount (${escapeHtml(currency)})<input name="discountAmount" id="sale-discount" type="number" min="0" step="0.01" value="0" /></label><label>Tax amount (${escapeHtml(currency)})<input name="taxAmount" id="sale-tax" type="number" min="0" step="0.01" value="0" /></label><div class="cart-total"><span>Transaction total</span><strong id="cart-total">${money(0, currency)}</strong></div><button class="button button-primary button-wide" type="submit" id="complete-sale" disabled>Record completed sale</button></form>
+      <p class="form-help">Enter discount and tax amounts manually; WorkflowOS does not assume a tax rate. This records a transaction stated as already completed; it does not charge or verify a payment. Sale snapshots and stock movements are saved together. Only verified barcode mappings are used for automatic scans.</p>
     </section><section class="panel activity-panel"><div class="panel-heading"><div><h2>Today’s transactions</h2><p>${data.recentSales.length} transaction${data.recentSales.length === 1 ? '' : 's'} · ${escapeHtml(data.todayDate)} local time</p></div></div>${data.recentSales.length ? `<div class="table-scroll"><table><thead><tr><th>Reference</th><th>Time</th><th>Customer</th><th>Items</th><th>Amount</th><th>Payment</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.recentSales.map((sale) => `<tr><td><strong>${escapeHtml(sale.reference)}</strong></td><td>${escapeHtml(dateTime(sale.created_at, data.business.timezone))}</td><td>${escapeHtml(sale.customer_name || 'Walk-in')}</td><td>${sale.items_count}</td><td><strong>${money(sale.total_cents, currency)}</strong></td><td>${escapeHtml(sale.payment_method || '—')}</td><td><span class="status-pill status-${escapeHtml(sale.status)}">${escapeHtml(sale.status)}</span></td><td>${sale.status === 'completed' ? `<button class="text-link refund-button" data-sale-id="${sale.id}">Refund & restock</button>` : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No transactions today</strong><span>Completed sales will be listed here.</span></div>'}</section></div>`;
 
   const input = document.getElementById('product-lookup');
@@ -773,9 +1245,19 @@ async function renderSales(content) {
 
   function updateCart() {
     const rows = [...cart.values()];
+    const discountCents = parseSaleAmount(document.getElementById('sale-discount').value);
+    const taxCents = parseSaleAmount(document.getElementById('sale-tax').value);
+    const subtotalCents = rows.reduce((sum, item) => sum + item.price_cents * item.quantity, 0);
+    const amountsValid = discountCents !== null &&
+      taxCents !== null &&
+      discountCents <= subtotalCents &&
+      Number.isSafeInteger(subtotalCents - discountCents + taxCents);
     document.getElementById('cart-count').textContent = `${rows.reduce((sum, item) => sum + item.quantity, 0)} item${rows.length === 1 && rows[0]?.quantity === 1 ? '' : 's'}`;
-    document.getElementById('cart-total').textContent = money(rows.reduce((sum, item) => sum + item.price_cents * item.quantity, 0), currency);
-    document.getElementById('complete-sale').disabled = rows.length === 0;
+    document.getElementById('cart-total').textContent = money(
+      subtotalCents - (discountCents || 0) + (taxCents || 0),
+      currency
+    );
+    document.getElementById('complete-sale').disabled = rows.length === 0 || !amountsValid;
     document.getElementById('sale-cart').innerHTML = rows.length ? rows.map((item) => `<div class="cart-row"><span class="product-initial">${escapeHtml(item.name.slice(0, 1).toUpperCase())}</span><span class="cart-product"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.barcode || item.sku || 'No barcode/SKU')} · ${money(item.price_cents, currency)} each · ${item.quantity_on_hand} in stock</small></span><label class="cart-quantity-label">Qty<input class="cart-quantity" type="number" min="1" max="${item.quantity_on_hand}" value="${item.quantity}" data-product-id="${item.id}" aria-label="Quantity of ${escapeHtml(item.name)}" /></label><strong class="cart-line-total">${money(item.price_cents * item.quantity, currency)}</strong><button class="remove-cart-item" type="button" data-product-id="${item.id}" aria-label="Remove ${escapeHtml(item.name)}">×</button></div>`).join('') : '<div class="cart-empty">Scan or search for a product to begin.</div>';
     document.querySelectorAll('.cart-quantity').forEach((field) => field.addEventListener('change', () => {
       const item = cart.get(Number(field.dataset.productId));
@@ -786,6 +1268,19 @@ async function renderSales(content) {
     }));
     document.querySelectorAll('.remove-cart-item').forEach((button) => button.addEventListener('click', () => { cart.delete(Number(button.dataset.productId)); updateCart(); input.focus(); }));
   }
+
+  function parseSaleAmount(value) {
+    if (value === '') return 0;
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount < 0) return null;
+    const cents = Math.round(amount * 100);
+    return Number.isSafeInteger(cents) && Math.abs(amount * 100 - cents) < 0.000001
+      ? cents
+      : null;
+  }
+
+  document.getElementById('sale-discount').addEventListener('input', updateCart);
+  document.getElementById('sale-tax').addEventListener('input', updateCart);
 
   function showSelected(product) {
     selectedProduct = product;
@@ -883,10 +1378,22 @@ async function renderSales(content) {
     submit.disabled = true;
     submit.textContent = 'Saving transaction…';
     try {
+      const discountCents = parseSaleAmount(values.discountAmount);
+      const taxCents = parseSaleAmount(values.taxAmount);
+      if (discountCents === null || taxCents === null) {
+        throw new Error('Discount and tax must be valid amounts with up to two decimal places.');
+      }
+
       await api('/api/sales', {
         method: 'POST',
         headers: { 'Idempotency-Key': crypto.randomUUID() },
-        body: JSON.stringify({ paymentMethod: values.paymentMethod, customerId: values.customerId || null, items }),
+        body: JSON.stringify({
+          paymentMethod: values.paymentMethod,
+          customerId: values.customerId || null,
+          discountCents,
+          taxCents,
+          items,
+        }),
       });
       currentView = 'sales';
       await renderView('sales');

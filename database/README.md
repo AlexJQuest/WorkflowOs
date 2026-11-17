@@ -1,17 +1,21 @@
 # Database package
 
-This project uses SQLite for the initial prototype. The schema is intentionally small, relational, and version-controlled so the design can evolve without destructive changes.
+The application runtime uses MariaDB through `mysql2`. Versioned runtime
+migrations are in `migrations-mariadb/` and are applied with `npm run db:migrate`.
+The separate `migrations/` directory contains the earlier SQLite prototype
+schema and is not used by the current server.
 
 ## Structure
 
-- `migrations/` - ordered schema changes
+- `migrations-mariadb/` - ordered MariaDB schema changes
+- `migrations/` - legacy SQLite prototype schema
 - `architecture/` - database design notes and relationships
 - `modules/` - logical module mapping for platform, catalog, customers, sales, and settings
 - `seed/` - repeatable reference data placeholders
 
-## Current baseline
+## Existing MariaDB baseline
 
-The first migration creates the core multi-tenant foundation:
+The server uses the existing core multi-tenant tables:
 
 - `users`
 - `businesses`
@@ -19,4 +23,6 @@ The first migration creates the core multi-tenant foundation:
 - `business_settings`
 - `sessions`
 
-This supports the registered user → business creation → authenticated dashboard → settings update → logout flow.
+The core schema predates the versioned MariaDB migrations. New runtime schema
+changes must be additive, placed in `migrations-mariadb/`, and applied through
+the migration runner so checksums and migration history are preserved.

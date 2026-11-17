@@ -116,7 +116,7 @@ async function aggregateSales(businessId, start, end) {
       `
       SELECT
         COUNT(*) AS transaction_count,
-        COALESCE(SUM(total_cents), 0) AS revenue_cents
+        COALESCE(SUM(subtotal_cents - discount_cents), 0) AS revenue_cents
       FROM sales
       WHERE business_id = ?
         AND status = 'completed'
@@ -133,11 +133,8 @@ async function aggregateSales(businessId, start, end) {
         COUNT(DISTINCT si.product_id) AS unique_products,
         COALESCE(
           SUM(
-            CASE
-              WHEN si.unit_cost_cents IS NOT NULL
-              THEN si.line_total_cents - (si.quantity * si.unit_cost_cents)
-              ELSE 0
-            END
+            si.line_total_cents - si.discount_cents -
+              (si.quantity * COALESCE(si.unit_cost_cents, 0))
           ),
           0
         ) AS gross_profit_cents,
@@ -272,7 +269,7 @@ function getPeriodBounds(
 async function getRangeSales(businessId, start, end) {
   return queryMany(
     `
-    SELECT created_at, total_cents
+    SELECT created_at, subtotal_cents, discount_cents
     FROM sales
     WHERE business_id = ?
       AND status = 'completed'
@@ -349,7 +346,9 @@ function getRevenueTrends(
 
     buckets.set(
       key,
-      (buckets.get(key) || 0) + numeric(sale.total_cents)
+      (buckets.get(key) || 0) +
+        numeric(sale.subtotal_cents) -
+        numeric(sale.discount_cents)
     );
   }
 
@@ -564,12 +563,14 @@ async function getDashboardData(businessId, options = {}) {
   );
 
   const periodRevenueCents = rangeSales.reduce(
-    (sum, sale) => sum + numeric(sale.total_cents),
+    (sum, sale) =>
+      sum + numeric(sale.subtotal_cents) - numeric(sale.discount_cents),
     0
   );
 
   const previousPeriodRevenueCents = previousSales.reduce(
-    (sum, sale) => sum + numeric(sale.total_cents),
+    (sum, sale) =>
+      sum + numeric(sale.subtotal_cents) - numeric(sale.discount_cents),
     0
   );
 
@@ -594,15 +595,9 @@ async function getDashboardData(businessId, options = {}) {
       si.product_name_snapshot AS name,
       si.product_category_snapshot AS category,
       SUM(si.quantity) AS quantity_sold,
-      SUM(si.line_total_cents) AS revenue_cents,
-      SUM(
-        CASE
-          WHEN si.unit_cost_cents IS NOT NULL
-          THEN si.line_total_cents -
-            (si.quantity * si.unit_cost_cents)
-          ELSE 0
-        END
-      ) AS gross_profit_cents,
+      SUM(si.line_total_cents - si.discount_cents) AS revenue_cents,
+      SUM(si.line_total_cents - si.discount_cents -
+        (si.quantity * COALESCE(si.unit_cost_cents, 0))) AS gross_profit_cents,
       SUM(
         CASE
           WHEN si.unit_cost_cents IS NULL
@@ -695,7 +690,7 @@ async function getDashboardData(businessId, options = {}) {
     `
     SELECT
       si.product_category_snapshot AS name,
-      SUM(si.line_total_cents) AS revenue_cents
+      SUM(si.line_total_cents - si.discount_cents) AS revenue_cents
     FROM sale_items si
     JOIN sales s ON s.id = si.sale_id
     WHERE s.business_id = ?
@@ -740,6 +735,24 @@ async function getDashboardData(businessId, options = {}) {
     .sort(
       (a, b) => b.grossProfitCents - a.grossProfitCents
     )[0] || null;
+
+  const monthStartDate = `${todayDate.slice(0, 7)}-01`;
+  const expenseStats = await queryOne(
+    `SELECT
+       COALESCE(SUM(CASE WHEN e.expense_date >= ? AND e.expense_date <= ?
+         THEN e.total_cents ELSE 0 END), 0) AS month_to_date_cents,
+       COALESCE(SUM(GREATEST(e.total_cents - COALESCE(p.paid_cents, 0), 0)), 0) AS outstanding_cents,
+       COUNT(CASE WHEN e.due_date < ? AND e.total_cents > COALESCE(p.paid_cents, 0)
+         THEN 1 END) AS overdue_count
+     FROM expenses e
+     LEFT JOIN (
+       SELECT business_id, expense_id, SUM(amount_cents) AS paid_cents
+       FROM expense_payments
+       GROUP BY business_id, expense_id
+     ) p ON p.business_id = e.business_id AND p.expense_id = e.id
+     WHERE e.business_id = ? AND e.status NOT IN ('cancelled', 'draft')`,
+    [monthStartDate, todayDate, todayDate, businessId]
+  );
 
   // ------------------------------------------------
   // FINAL DASHBOARD RESPONSE
@@ -799,6 +812,12 @@ async function getDashboardData(businessId, options = {}) {
         lowStockCount: numeric(inventory?.low_stock_count),
         outOfStockCount: numeric(inventory?.out_of_stock_count),
         lowStockProducts,
+      },
+
+      expenses: {
+        monthToDateCents: numeric(expenseStats?.month_to_date_cents),
+        outstandingCents: numeric(expenseStats?.outstanding_cents),
+        overdueCount: numeric(expenseStats?.overdue_count),
       },
 
       productCount: totalProducts,
