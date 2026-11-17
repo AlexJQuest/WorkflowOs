@@ -33,6 +33,8 @@ estimate subtracts recorded expenses including tax and can double-count stock
 purchases already included in cost of sales; it is not an accounting statement.
 Revenue excludes sales tax. Profit estimates treat missing sale-time costs as
 zero and may overstate profit; historical cost snapshots are not changed.
+Stock value estimates also treat missing product costs as zero, which can
+understate the value of inventory.
 Reports can be printed or saved as PDF through the browser; the server does not
 generate PDF files. Receipt uploads are not enabled because this deployment
 has no private file-storage service.

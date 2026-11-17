@@ -242,9 +242,7 @@ async function getReportsOverview(businessId, filters = {}) {
     recurringMonthlyCommitmentsCents: Math.round(numeric(recurring?.monthly_commitment_cents)),
     inventory: {
       unitsOnHand: numeric(inventory?.units_on_hand),
-      valuationCents: numeric(inventory?.unknown_cost_products)
-        ? null
-        : numeric(inventory?.known_valuation_cents),
+      valuationCents: numeric(inventory?.known_valuation_cents),
       valuationComplete: numeric(inventory?.unknown_cost_products) === 0,
       unknownCostProducts: numeric(inventory?.unknown_cost_products),
       lowStockCount: numeric(inventory?.low_stock_count),
@@ -491,7 +489,7 @@ async function getInventoryReport(businessId, filters = {}) {
           : 'in_stock',
       inventoryValueCents: row.cost_is_known
         ? numeric(row.quantity_on_hand) * numeric(row.cost_cents)
-        : null,
+        : 0,
       costKnown: Boolean(row.cost_is_known),
       unitsSold: numeric(row.units_sold),
       lastMovement: row.last_movement,
@@ -604,13 +602,14 @@ async function getExportRows(businessId, type, filters = {}) {
     }));
   } else if (type === 'inventory') {
     const data = await getInventoryReport(businessId, filters);
-    title = 'Inventory report';
+    title = 'Inventory report (missing product costs treated as zero)';
     rows = data.products.map((row) => ({
       Product: row.name,
       Category: row.category || '',
       'On hand': row.quantityOnHand,
       'Reorder level': row.reorderLevel,
-      'Inventory value in cents': row.inventoryValueCents ?? 'Unavailable — cost unknown',
+      'Inventory value in cents': row.inventoryValueCents,
+      'Cost status': row.costKnown ? 'Recorded' : 'Missing - treated as zero',
       Status: row.status,
     }));
   } else if (type === 'customers') {

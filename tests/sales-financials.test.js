@@ -152,7 +152,7 @@ test('sale discounts and tax flow through the dashboard without overstating reve
 
   const unknownProductResponse = await request(baseUrl, registration.sessionToken, '/api/products', {
     method: 'POST',
-    body: JSON.stringify({ name: 'Unknown cost', price: 5, initialStock: 1 }),
+    body: JSON.stringify({ name: 'Unknown cost', price: 5, initialStock: 3 }),
   });
   assert.equal(unknownProductResponse.status, 201);
   const unknownProduct = (await unknownProductResponse.json()).product;
@@ -170,6 +170,19 @@ test('sale discounts and tax flow through the dashboard without overstating reve
   assert.equal(estimate.revenueCents, 2200);
   assert.equal(estimate.grossProfitCents, 1400);
   assert.equal(estimate.netOperatingResultCents, 1400);
+  assert.equal(estimate.inventory.valuationCents, 1200);
+  assert.equal(estimate.inventory.valuationComplete, false);
+  assert.equal(estimate.inventory.unknownCostProducts, 1);
+  const inventoryReport = await request(baseUrl, registration.sessionToken, '/api/reports/inventory?period=today');
+  assert.equal(inventoryReport.status, 200);
+  const inventoryProducts = (await inventoryReport.json()).products;
+  assert.equal(inventoryProducts.find((item) => item.id === product.id).inventoryValueCents, 1200);
+  const unknownInventory = inventoryProducts.find((item) => item.id === unknownProduct.id);
+  assert.equal(unknownInventory.inventoryValueCents, 0);
+  assert.equal(unknownInventory.costKnown, false);
+  const inventoryCsv = await request(baseUrl, registration.sessionToken, '/api/reports/inventory.csv?period=today');
+  assert.equal(inventoryCsv.status, 200);
+  assert.match(await inventoryCsv.text(), /"Unknown cost"[^\r\n]*"0","Missing - treated as zero"/);
   const estimatedDashboardResponse = await request(baseUrl, registration.sessionToken, '/api/dashboard?period=today');
   assert.equal(estimatedDashboardResponse.status, 200);
   const estimatedDashboard = await estimatedDashboardResponse.json();
@@ -195,4 +208,7 @@ test('sale discounts and tax flow through the dashboard without overstating reve
   const withZero = await (await request(baseUrl, registration.sessionToken, '/api/reports/overview?period=today')).json();
   assert.equal(withZero.unknownCostUnits, 1);
   assert.equal(withZero.grossProfitCents, 1600);
+  assert.equal(withZero.inventory.unknownCostProducts, 1);
+  const withZeroInventory = await (await request(baseUrl, registration.sessionToken, '/api/reports/inventory?period=today')).json();
+  assert.equal(withZeroInventory.products.find((item) => item.id === zeroProduct.id).costKnown, true);
 });
