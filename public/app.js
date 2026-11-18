@@ -8,10 +8,14 @@ let currentView = 'dashboard';
 let customStartDate = '';
 let customEndDate = '';
 let expenseFilters = new URLSearchParams();
+let invoiceFilters = new URLSearchParams();
 let reportPeriod = 'month';
 let reportStartDate = '';
 let reportEndDate = '';
 let reportType = 'sales';
+let reportStatusFilter = '';
+let reportEntityFilter = '';
+let payablesFilters = new URLSearchParams();
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦' },
@@ -19,6 +23,9 @@ const navItems = [
   { id: 'products', label: 'Products & Services', icon: '◇' },
   { id: 'inventory', label: 'Inventory & Stock', icon: '▤' },
   { id: 'customers', label: 'Customers', icon: '◎' },
+  { id: 'invoices', label: 'Invoices', icon: '▧' },
+  { id: 'payables', label: 'Supplier Invoices', icon: '−' },
+  { id: 'documents', label: 'Financial Documents', icon: '▤' },
   { id: 'loyalty', label: 'Loyalty & Memberships', icon: '✳', planned: true },
   { id: 'expenses', label: 'Expenses', icon: '−' },
   { id: 'insights', label: 'Business Insights / AI Coach', icon: '✧', planned: true },
@@ -65,6 +72,32 @@ async function api(url, options = {}) {
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || 'The request could not be completed.');
   return body;
+}
+
+async function authenticatedBlob(url) {
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${sessionToken}` },
+  });
+  if (response.status === 401) {
+    clearSession();
+    renderAuth('Your session expired. Please sign in again.');
+    throw new Error('Your session expired. Please sign in again.');
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || 'The file could not be opened.');
+  }
+  return response.blob();
+}
+
+async function downloadAuthenticatedFile(url, filename) {
+  const blob = await authenticatedBlob(url);
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
 }
 
 function clearSession() {
@@ -300,7 +333,7 @@ async function loadAuthenticatedApp() {
     if (!sessionInfo.business) throw new Error('No business is assigned to this account.');
     if (location.pathname !== '/dashboard' && location.pathname !== '/') history.replaceState({}, '', '/dashboard');
     if (location.pathname === '/') history.replaceState({}, '', '/dashboard');
-    currentView = ['dashboard', 'sales', 'products', 'inventory', 'customers', 'settings'].includes(currentView) ? currentView : 'dashboard';
+    currentView = ['dashboard', 'sales', 'products', 'inventory', 'customers', 'invoices', 'settings'].includes(currentView) ? currentView : 'dashboard';
     renderShell();
     await renderView(currentView);
   } catch (error) {
@@ -363,6 +396,9 @@ async function renderView(view) {
     if (view === 'dashboard') return await renderDashboard(content);
     if (view === 'products') return await renderProducts(content);
     if (view === 'customers') return await renderCustomers(content);
+    if (view === 'invoices') return await renderInvoices(content);
+    if (view === 'payables') return await renderPayables(content);
+    if (view === 'documents') return await renderFinancialDocuments(content);
     if (view === 'inventory') return await renderInventory(content);
     if (view === 'sales') return await renderSales(content);
     if (view === 'expenses') return await renderExpenses(content);
@@ -371,7 +407,7 @@ async function renderView(view) {
     content.innerHTML = '<div class="empty-state"><h2>Module not available</h2><p>This area is not included in the current local prototype.</p></div>';
   } catch (error) {
     content.innerHTML = `<div class="error-panel"><strong>We couldn’t load this view.</strong><p>${escapeHtml(error.message)}</p><button class="button button-secondary" id="retry-view">Try again</button></div>`;
-    document.getElementById('retry-view').addEventListener('click', () => renderView(view));
+    content.querySelector('#retry-view')?.addEventListener('click', () => renderView(view));
   }
 }
 
@@ -393,11 +429,12 @@ async function renderDashboard(content) {
   }
   dashboardData = await api(`/api/dashboard?${query}`);
   const data = dashboardData;
-  if (!data.summary?.expenses) {
+  if (!data.summary?.expenses || !data.summary?.financial) {
     throw new Error('The server is out of date. Restart WorkflowOS and refresh this page.');
   }
   const summary = data.summary;
   const today = summary.today;
+  const financial = summary.financial;
   const currency = data.business.currency;
   const periodOptions = [['today', 'Today'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['custom', 'Custom range']];
   if (currentPeriod === 'custom' && !customStartDate) customStartDate = data.todayDate;
@@ -413,6 +450,15 @@ async function renderDashboard(content) {
       ${kpiCard('⌁', 'Gross profit', money(today.grossProfitCents, currency), today.grossProfitComplete ? `${today.grossProfitMarginPct ?? 0}% margin` : 'Estimate — missing sale-time costs treated as zero', today.grossProfitComplete ? '' : '<span class="metric-change neutral">Cost data incomplete</span>', 'icon-amber')}
       ${kpiCard('◎', 'Customers', String(summary.customers.total), `+${summary.customers.newToday} new · ${summary.customers.returningToday} returning today`, '', 'icon-teal')}
       ${kpiCard('!', 'Stock attention', String(summary.inventory.lowStockCount + summary.inventory.outOfStockCount), `${summary.inventory.lowStockCount} low · ${summary.inventory.outOfStockCount} out of stock`, '<button class="text-link" data-view="inventory">View stock →</button>', 'icon-red')}
+    </section>
+    <section class="kpi-grid report-kpis" aria-label="Accounts receivable and payable">
+      ${kpiCard('▤', 'Customer invoices outstanding', money(financial.receivables.outstandingCents, currency), `${money(financial.receivables.overdueCents, currency)} overdue · ${financial.receivables.overdueCount} invoices`, '<button class="text-link" data-view="invoices">Review receivables →</button>', 'icon-blue')}
+      ${kpiCard('↗', 'Customer payments this month', money(financial.receivables.paymentsThisMonthCents, currency), `${money(financial.receivables.paymentsTodayCents, currency)} received today`, '', 'icon-green')}
+      ${kpiCard('−', 'Supplier invoices outstanding', money(financial.payables.outstandingCents, currency), `${money(financial.payables.overdueCents, currency)} overdue · ${financial.payables.overdueCount} invoices`, '<button class="text-link" data-view="expenses">Review payables →</button>', 'icon-red')}
+      ${kpiCard('⌁', 'Supplier payments this month', money(financial.payables.paymentsThisMonthCents, currency), `${financial.payables.dueWithinWeek} invoices due within 7 days`, '', 'icon-amber')}
+    </section>
+    <section class="panel report-panel"><div class="panel-heading"><div><h2>Financial action centre</h2><p>Items requiring follow-up across invoices and stock receipts</p></div><button class="text-link" data-view="reports">Open financial reports →</button></div>
+      ${financial.actionItems.length ? `<div class="best-list">${financial.actionItems.map((item) => `<div class="best-row"><span class="product-initial">${item.type === 'customer_invoice_overdue' ? '!' : item.type === 'supplier_invoice_due' ? '−' : '▤'}</span><span class="best-product"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}${item.amountCents === undefined ? '' : ` · ${money(item.amountCents, currency)}`}</small></span><button class="text-link" data-view="${escapeHtml(item.view)}">Review →</button></div>`).join('')}</div>` : '<div class="mini-empty">No overdue invoices, near-term supplier payments, or outstanding deliveries.</div>'}
     </section>
     <section class="dashboard-grid primary-grid">
       <article class="panel chart-panel"><div class="panel-heading"><div><h2>Revenue performance</h2><p>Completed sales · ${escapeHtml(currency)}</p></div><div class="chart-controls"><select id="period-select" aria-label="Reporting period">${periodOptions.map(([value, label]) => `<option value="${value}" ${currentPeriod === value ? 'selected' : ''}>${label}</option>`).join('')}</select><select id="granularity-select" aria-label="Chart interval"><option value="daily" ${currentGranularity === 'daily' ? 'selected' : ''}>Daily</option><option value="weekly" ${currentGranularity === 'weekly' ? 'selected' : ''}>Weekly</option><option value="monthly" ${currentGranularity === 'monthly' ? 'selected' : ''}>Monthly</option></select></div></div>
@@ -471,6 +517,687 @@ function centsFromInput(value) {
     : null;
 }
 
+function taxRateBpsFromInput(value) {
+  const match = /^(0|[1-9]\d{0,2})(?:\.(\d{1,2}))?$/.exec(String(value ?? ''));
+  if (!match) return null;
+  const rate = Number(match[1]) * 100 + Number((match[2] || '').padEnd(2, '0'));
+  return Number.isSafeInteger(rate) && rate <= 10000 ? rate : null;
+}
+
+function dateInputValue(value) {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value || '').slice(0, 10);
+}
+
+async function renderInvoices(content) {
+  const invoiceQuery = new URLSearchParams(invoiceFilters);
+  invoiceQuery.set('page', '1');
+  invoiceQuery.set('pageSize', '50');
+  const [list, customersResponse, productsResponse, settingsResponse] = await Promise.all([
+    api(`/api/invoices?${invoiceQuery}`),
+    api('/api/customers'),
+    api('/api/products'),
+    api('/api/invoices/settings'),
+  ]);
+  const customers = customersResponse.customers || [];
+  const products = (productsResponse.products || []).filter((product) => Number(product.is_active));
+  const currency = sessionInfo.business.currency;
+  const today = new Date().toISOString().slice(0, 10);
+  let editingInvoiceId = null;
+
+  function lineEditor(line = {}) {
+    const type = line.item_type || line.itemType || 'custom';
+    const selectedProductId = Number(line.product_id || line.productId || 0);
+    const productOptions = products.map((product) =>
+      `<option value="${product.id}" ${selectedProductId === Number(product.id) ? 'selected' : ''}>${escapeHtml(product.name)}</option>`
+    ).join('');
+    const quantity = line.quantity_millis
+      ? (Number(line.quantity_millis) / 1000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
+      : (line.quantity || '1');
+    const price = line.unit_price_cents !== undefined
+      ? (Number(line.unit_price_cents) / 100).toFixed(2)
+      : (line.unitPrice || '');
+    const discount = line.discount_cents !== undefined
+      ? (Number(line.discount_cents) / 100).toFixed(2)
+      : (line.discount || '');
+    const taxRate = line.tax_rate_bps !== undefined
+      ? (Number(line.tax_rate_bps) / 100).toFixed(2)
+      : (line.taxRate || '0');
+    return `<fieldset class="invoice-line-editor">
+      <legend>Invoice item</legend>
+      <label>Existing product or service<select class="invoice-line-product"><option value="">Custom item</option>${productOptions}</select></label>
+      <label>Type<select class="invoice-line-type"><option value="custom" ${type === 'custom' ? 'selected' : ''}>Custom</option><option value="product" ${type === 'product' ? 'selected' : ''}>Product</option><option value="service" ${type === 'service' ? 'selected' : ''}>Service</option></select></label>
+      <label>Description<input class="invoice-line-name" maxlength="191" value="${escapeHtml(line.item_name || line.name || '')}" required /></label>
+      <label>Quantity<input class="invoice-line-quantity" type="number" min="0.001" step="0.001" value="${escapeHtml(quantity)}" required /></label>
+      <label>Unit price (${escapeHtml(currency)})<input class="invoice-line-price" type="number" min="0" step="0.01" value="${escapeHtml(price)}" required /></label>
+      <label>Discount (${escapeHtml(currency)})<input class="invoice-line-discount" type="number" min="0" step="0.01" value="${escapeHtml(discount)}" /></label>
+      <label>Tax rate (%)<input class="invoice-line-tax" type="number" min="0" max="100" step="0.01" value="${escapeHtml(taxRate)}" /></label>
+      <label class="invoice-tax-inclusive"><input class="invoice-line-inclusive" type="checkbox" ${Number(line.tax_inclusive) === 1 || line.taxInclusive ? 'checked' : ''} /> Price includes tax</label>
+      <button class="button button-secondary invoice-line-remove" type="button">Remove item</button>
+    </fieldset>`;
+  }
+
+  content.innerHTML = `
+    <section class="page-heading"><div><span class="eyebrow">FINANCE</span><h1>Invoices</h1><p>Create customer invoices, issue numbered records, and track payments separately from POS sales.</p></div></section>
+    <section class="panel invoice-create-panel">
+      <div class="panel-heading"><div><h2 id="invoice-form-title">Create draft invoice</h2><p>Totals and tax are recalculated by the server; issuing an invoice locks its financial details.</p></div></div>
+      <form id="invoice-form" class="invoice-form">
+        <div class="invoice-header-fields">
+          <label>Customer<select name="customerId" required><option value="">Choose a customer</option>${customers.map((customer) => `<option value="${customer.id}">${escapeHtml(customer.name)}${customer.email ? ` · ${escapeHtml(customer.email)}` : ''}</option>`).join('')}</select></label>
+          <label>Invoice date<input name="invoiceDate" type="date" value="${today}" required /></label>
+          <label>Due date<input name="dueDate" type="date" value="${today}" required /></label>
+          <label>Reference (optional)<input name="referenceNumber" maxlength="100" /></label>
+          <label class="invoice-address-field">Billing address (optional)<textarea name="customerBillingAddress" maxlength="2000"></textarea></label>
+          <label>Payment terms<input name="paymentTerms" maxlength="500" placeholder="e.g. Due within 14 days" /></label>
+          <label class="invoice-address-field">Notes<textarea name="notes" maxlength="4000"></textarea></label>
+          <label class="invoice-address-field">Terms and conditions<textarea name="termsAndConditions" maxlength="4000"></textarea></label>
+        </div>
+        <div id="invoice-lines">${lineEditor()}</div>
+        <div class="invoice-form-actions"><button class="button button-secondary" id="invoice-add-line" type="button">Add line item</button><button class="button button-primary" id="invoice-save" type="submit">Save draft</button><button class="button button-secondary hidden" id="invoice-edit-cancel" type="button">Stop editing</button></div>
+        <p class="inline-feedback" id="invoice-form-feedback" aria-live="polite"></p>
+      </form>
+    </section>
+    <section class="panel list-panel invoice-list-panel">
+      <div class="panel-heading"><div><h2>Customer invoices</h2><p>${list.total} record${list.total === 1 ? '' : 's'} · invoice revenue is distinct from cash collected at point of sale</p></div></div>
+      <form id="invoice-filters" class="expense-filters">
+        <label>Search<input name="search" value="${escapeHtml(invoiceFilters.get('search') || '')}" placeholder="Number, customer, or reference" /></label>
+        <label>Status<select name="status"><option value="">All statuses</option><option value="draft" ${invoiceFilters.get('status') === 'draft' ? 'selected' : ''}>Draft</option><option value="issued" ${invoiceFilters.get('status') === 'issued' ? 'selected' : ''}>Issued</option><option value="sent" ${invoiceFilters.get('status') === 'sent' ? 'selected' : ''}>Sent</option><option value="partially_paid" ${invoiceFilters.get('status') === 'partially_paid' ? 'selected' : ''}>Partially paid</option><option value="paid" ${invoiceFilters.get('status') === 'paid' ? 'selected' : ''}>Paid</option><option value="overdue" ${invoiceFilters.get('status') === 'overdue' ? 'selected' : ''}>Overdue</option><option value="cancelled" ${invoiceFilters.get('status') === 'cancelled' ? 'selected' : ''}>Cancelled</option></select></label>
+        <button class="button button-secondary" type="submit">Apply filters</button>
+        <button class="button button-secondary" id="invoice-clear-filters" type="button">Clear</button>
+      </form>
+      ${list.invoices.length ? `<div class="table-scroll"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Date / due</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody>${list.invoices.map((invoice) => `<tr><td><strong>${escapeHtml(invoice.invoice_number || 'Draft')}</strong><small>${escapeHtml(invoice.reference_number || '')}</small></td><td>${escapeHtml(invoice.customer_name)}</td><td>${escapeHtml(dateInputValue(invoice.invoice_date))}<small>Due ${escapeHtml(dateInputValue(invoice.due_date))}</small></td><td>${money(invoice.total_cents, currency)}</td><td>${money(invoice.paid_cents, currency)}</td><td>${money(invoice.outstanding_cents, currency)}</td><td><span class="status-pill status-${escapeHtml(invoice.display_status)}">${escapeHtml(invoice.display_status.replace('_', ' '))}</span></td><td><div class="invoice-row-actions"><button class="text-link invoice-view" data-id="${invoice.id}" type="button">Details</button><button class="text-link invoice-pdf" data-id="${invoice.id}" type="button">Download PDF</button>${['issued', 'sent', 'partially_paid', 'overdue'].includes(invoice.display_status) ? `<button class="text-link invoice-email" data-id="${invoice.id}" type="button">Email</button>` : ''}${invoice.status === 'draft' ? `<button class="text-link invoice-edit" data-id="${invoice.id}" type="button">Edit draft</button><button class="text-link invoice-issue" data-id="${invoice.id}" type="button">Issue</button>` : ''}${['issued', 'sent', 'partially_paid', 'overdue'].includes(invoice.display_status) ? `<button class="text-link invoice-pay" data-id="${invoice.id}" type="button">Record payment</button>` : ''}${['issued', 'sent'].includes(invoice.status) && Number(invoice.paid_cents) === 0 ? `<button class="text-link invoice-cancel" data-id="${invoice.id}" type="button">Cancel</button>` : ''}</div></td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No invoices found</strong><span>Choose an existing customer above to create a draft invoice. Drafts are not counted as completed POS sales.</span></div>'}
+    </section>
+    <section class="panel invoice-settings-panel"><h2>Invoice settings</h2><form id="invoice-settings-form" class="record-form invoice-settings-form">
+      <label>Invoice number prefix<input name="numberPrefix" value="${escapeHtml(settingsResponse.settings.numberPrefix)}" maxlength="20" pattern="[A-Za-z0-9][A-Za-z0-9-]*" required /></label>
+      <label>Bank account name<input name="bankAccountName" value="${escapeHtml(settingsResponse.settings.bankAccountName)}" maxlength="191" /></label>
+      <label>Bank name<input name="bankName" value="${escapeHtml(settingsResponse.settings.bankName)}" maxlength="191" /></label>
+      <label>Account number<input name="bankAccountNumber" value="${escapeHtml(settingsResponse.settings.bankAccountNumber)}" maxlength="100" /></label>
+      <label>Branch code<input name="bankBranchCode" value="${escapeHtml(settingsResponse.settings.bankBranchCode)}" maxlength="40" /></label>
+      <label>Account type<input name="bankAccountType" value="${escapeHtml(settingsResponse.settings.bankAccountType)}" maxlength="80" /></label>
+      <label>Payment instructions<textarea name="paymentInstructions" maxlength="1000">${escapeHtml(settingsResponse.settings.paymentInstructions)}</textarea></label>
+      <input type="hidden" name="logoDocumentId" value="${escapeHtml(settingsResponse.settings.logoDocumentId || '')}" />
+      <button class="button button-secondary" type="submit">Save invoice settings</button><span class="inline-feedback" id="invoice-settings-feedback" aria-live="polite"></span>
+    </form><form id="invoice-logo-form" class="compact-form"><label>Business logo (JPEG or PNG)<input type="file" name="logo" accept="image/jpeg,image/png" /></label><button class="button button-secondary" type="submit">Upload logo</button></form></section>
+    <dialog class="expense-dialog" id="invoice-details-dialog"></dialog>
+    <dialog class="expense-dialog" id="invoice-payment-dialog"></dialog>`;
+
+  const invoiceForm = document.getElementById('invoice-form');
+  const invoiceLines = document.getElementById('invoice-lines');
+  const invoiceDialog = document.getElementById('invoice-details-dialog');
+  document.getElementById('invoice-add-line').addEventListener('click', () => {
+    invoiceLines.insertAdjacentHTML('beforeend', lineEditor());
+  });
+  invoiceLines.addEventListener('click', (event) => {
+    if (!event.target.classList.contains('invoice-line-remove')) return;
+    const rows = invoiceLines.querySelectorAll('.invoice-line-editor');
+    if (rows.length === 1) {
+      showInlineError(invoiceForm, 'An invoice must contain at least one line item.');
+      return;
+    }
+    event.target.closest('.invoice-line-editor').remove();
+  });
+  invoiceLines.addEventListener('change', (event) => {
+    const row = event.target.closest('.invoice-line-editor');
+    if (event.target.classList.contains('invoice-line-type') && event.target.value === 'custom') {
+      row.querySelector('.invoice-line-product').value = '';
+      return;
+    }
+    if (event.target.classList.contains('invoice-line-product')) {
+      const product = products.find((item) => Number(item.id) === Number(event.target.value));
+      if (!product) {
+        row.querySelector('.invoice-line-type').value = 'custom';
+        return;
+      }
+      row.querySelector('.invoice-line-type').value = 'product';
+      row.querySelector('.invoice-line-name').value = product.name;
+      row.querySelector('.invoice-line-price').value = (Number(product.price_cents) / 100).toFixed(2);
+    }
+  });
+  document.getElementById('invoice-edit-cancel').addEventListener('click', () => renderInvoices(content));
+
+  invoiceForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    const items = [];
+    for (const row of invoiceLines.querySelectorAll('.invoice-line-editor')) {
+      const unitPriceCents = centsFromInput(row.querySelector('.invoice-line-price').value);
+      const discountCents = centsFromInput(row.querySelector('.invoice-line-discount').value);
+      const taxRateBps = taxRateBpsFromInput(row.querySelector('.invoice-line-tax').value || '0');
+      if (unitPriceCents === null || discountCents === null || taxRateBps === null) {
+        showInlineError(form, 'Enter valid prices and a tax rate from 0% to 100%, using at most two decimal places.');
+        return;
+      }
+      items.push({
+        productId: row.querySelector('.invoice-line-product').value || null,
+        itemType: row.querySelector('.invoice-line-type').value,
+        name: row.querySelector('.invoice-line-name').value,
+        quantity: row.querySelector('.invoice-line-quantity').value,
+        unitPriceCents,
+        discountCents,
+        taxRateBps,
+        taxInclusive: row.querySelector('.invoice-line-inclusive').checked,
+      });
+    }
+    const submit = document.getElementById('invoice-save');
+    submit.disabled = true;
+    try {
+      const endpoint = editingInvoiceId ? `/api/invoices/${editingInvoiceId}` : '/api/invoices';
+      await api(endpoint, {
+        method: editingInvoiceId ? 'PUT' : 'POST',
+        body: JSON.stringify({
+          customerId: values.customerId,
+          invoiceDate: values.invoiceDate,
+          dueDate: values.dueDate,
+          referenceNumber: values.referenceNumber,
+          customerBillingAddress: values.customerBillingAddress,
+          paymentTerms: values.paymentTerms,
+          notes: values.notes,
+          termsAndConditions: values.termsAndConditions,
+          items,
+        }),
+      });
+      await renderInvoices(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+      submit.disabled = false;
+    }
+  });
+
+  document.getElementById('invoice-filters').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    invoiceFilters = new URLSearchParams();
+    for (const [key, value] of new FormData(event.currentTarget).entries()) {
+      if (value) invoiceFilters.set(key, value);
+    }
+    try {
+      await renderInvoices(content);
+    } catch (error) {
+      showInlineError(event.currentTarget, error.message);
+    }
+  });
+  document.getElementById('invoice-clear-filters').addEventListener('click', () => {
+    invoiceFilters = new URLSearchParams();
+    renderInvoices(content).catch((error) => alert(error.message));
+  });
+  document.getElementById('invoice-settings-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const feedback = document.getElementById('invoice-settings-feedback');
+    try {
+      const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+      const result = await api('/api/invoices/settings', {
+        method: 'PUT',
+        body: JSON.stringify(values),
+      });
+      feedback.textContent = `Invoice settings saved. New invoices will use ${result.settings.numberPrefix}.`;
+      feedback.className = 'inline-feedback success';
+    } catch (error) {
+      feedback.textContent = error.message;
+      feedback.className = 'inline-feedback error';
+    }
+  });
+  document.getElementById('invoice-logo-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const file = form.elements.logo.files[0];
+    if (!file) return showInlineError(form, 'Choose a JPEG or PNG logo first.');
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      const uploaded = await api('/api/business/invoice-logo', {
+        method: 'POST',
+        headers: { 'Content-Type': file.type, 'X-File-Name': encodeURIComponent(file.name) },
+        body: file,
+      });
+      form.reset();
+      await api('/api/invoices/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          numberPrefix: document.querySelector('#invoice-settings-form [name="numberPrefix"]').value,
+          logoDocumentId: uploaded.document.id,
+        }),
+      });
+      await renderInvoices(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+      button.disabled = false;
+    }
+  });
+
+  async function editInvoice(invoiceId) {
+    try {
+      const invoice = (await api(`/api/invoices/${invoiceId}`)).invoice;
+      editingInvoiceId = invoice.id;
+      invoiceForm.elements.customerId.value = String(invoice.customer_id);
+      invoiceForm.elements.invoiceDate.value = dateInputValue(invoice.invoice_date);
+      invoiceForm.elements.dueDate.value = dateInputValue(invoice.due_date);
+      invoiceForm.elements.referenceNumber.value = invoice.reference_number || '';
+      invoiceForm.elements.customerBillingAddress.value = invoice.customer_billing_address || '';
+      invoiceForm.elements.paymentTerms.value = invoice.payment_terms || '';
+      invoiceForm.elements.notes.value = invoice.notes || '';
+      invoiceForm.elements.termsAndConditions.value = invoice.terms_and_conditions || '';
+      invoiceLines.innerHTML = invoice.items.map((item) => lineEditor(item)).join('');
+      document.getElementById('invoice-form-title').textContent = `Edit draft ${invoice.id}`;
+      document.getElementById('invoice-save').textContent = 'Save draft changes';
+      document.getElementById('invoice-edit-cancel').classList.remove('hidden');
+      invoiceForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (error) {
+      alert(error.message);
+    }
+  }
+
+  async function showInvoice(invoiceId) {
+    try {
+      const invoice = (await api(`/api/invoices/${invoiceId}`)).invoice;
+      invoiceDialog.innerHTML = `<form method="dialog" class="dialog-close"><button class="icon-button" aria-label="Close">×</button></form><h2>${escapeHtml(invoice.invoice_number || `Draft ${invoice.id}`)}</h2><p>${escapeHtml(invoice.customer_name)} · ${escapeHtml(invoice.status.replace('_', ' '))}</p><dl><div><dt>Invoice date</dt><dd>${escapeHtml(dateInputValue(invoice.invoice_date))}</dd></div><div><dt>Due date</dt><dd>${escapeHtml(dateInputValue(invoice.due_date))}</dd></div><div><dt>Billing address</dt><dd>${escapeHtml(invoice.customer_billing_address || '—')}</dd></div><div><dt>Subtotal / discount / tax</dt><dd>${money(invoice.subtotal_cents, currency)} / ${money(invoice.discount_cents, currency)} / ${money(invoice.tax_cents, currency)}</dd></div><div><dt>Total / paid / balance</dt><dd>${money(invoice.total_cents, currency)} / ${money(invoice.paid_cents, currency)} / ${money(invoice.outstanding_cents, currency)}</dd></div></dl><h3>Items</h3><div class="table-scroll"><table><thead><tr><th>Description</th><th>Qty</th><th>Unit price</th><th>Discount</th><th>Tax</th><th>Total</th></tr></thead><tbody>${invoice.items.map((item) => `<tr><td>${escapeHtml(item.item_name)}<small>${escapeHtml(item.description || '')}</small></td><td>${Number(item.quantity_millis) / 1000}</td><td>${money(item.unit_price_cents, currency)}</td><td>${money(item.discount_cents, currency)}</td><td>${money(item.tax_cents, currency)}</td><td>${money(item.total_cents, currency)}</td></tr>`).join('')}</tbody></table></div><h3>Payment history</h3>${invoice.payments.length ? `<div class="table-scroll"><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th><th>Receipt</th></tr></thead><tbody>${invoice.payments.map((payment) => `<tr><td>${escapeHtml(dateInputValue(payment.payment_date))}</td><td>${escapeHtml(payment.payment_method)}</td><td>${escapeHtml(payment.reference || '—')}</td><td>${money(payment.amount_cents, currency)}</td><td><button class="text-link receipt-download" data-id="${payment.id}" type="button">PDF</button> <button class="text-link receipt-email" data-id="${payment.id}" type="button">Email</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted-copy">No payments recorded.</p>'}<h3>Credit notes</h3>${invoice.creditNotes?.length ? `<div class="table-scroll"><table><thead><tr><th>Credit</th><th>Date</th><th>Reason</th><th>Amount</th><th>PDF</th></tr></thead><tbody>${invoice.creditNotes.map((credit) => `<tr><td>${escapeHtml(credit.credit_number)}</td><td>${escapeHtml(dateInputValue(credit.credit_date))}</td><td>${escapeHtml(credit.reason)}</td><td>${money(credit.total_cents, currency)}</td><td><button class="text-link credit-pdf" data-id="${credit.id}" type="button">PDF</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted-copy">No credit notes recorded.</p>'}${invoice.outstanding_cents > 0 && ['issued', 'sent', 'partially_paid', 'overdue'].includes(invoice.status) ? `<form id="invoice-credit-form" class="record-form"><h3>Issue a credit note</h3><label>Invoice item<select name="invoiceItemId" required>${invoice.items.map((item) => `<option value="${item.id}">${escapeHtml(item.item_name)} · ${Number(item.quantity_millis) / 1000} units</option>`).join('')}</select></label><label>Quantity<input name="quantity" type="number" min="0.001" step="0.001" required /></label><label>Credit date<input name="creditDate" type="date" value="${today}" required /></label><label>Reason<input name="reason" maxlength="1000" required /></label><button class="button button-secondary" type="submit">Create credit note</button><p class="inline-feedback" aria-live="polite"></p></form>` : ''}`;
+      invoiceDialog.showModal();
+      invoiceDialog.querySelectorAll('.receipt-download').forEach((button) => button.addEventListener('click', () => {
+        downloadAuthenticatedFile(`/api/invoice-payments/${button.dataset.id}/receipt.pdf`, `receipt-${button.dataset.id}.pdf`)
+          .catch((error) => alert(error.message));
+      }));
+      invoiceDialog.querySelectorAll('.receipt-email').forEach((button) => button.addEventListener('click', async () => {
+        try {
+          await api(`/api/invoice-payments/${button.dataset.id}/receipt-email`, { method: 'POST' });
+          alert('Receipt email accepted by the configured provider.');
+        } catch (error) {
+          alert(error.message);
+        }
+      }));
+      invoiceDialog.querySelectorAll('.credit-pdf').forEach((button) => button.addEventListener('click', () => {
+        downloadAuthenticatedFile(`/api/credit-notes/${button.dataset.id}/pdf`, `credit-note-${button.dataset.id}.pdf`)
+          .catch((error) => alert(error.message));
+      }));
+      invoiceDialog.querySelector('#invoice-credit-form')?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const values = Object.fromEntries(new FormData(form).entries());
+        const submit = form.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        try {
+          await api(`/api/invoices/${invoice.id}/credit-notes`, {
+            method: 'POST',
+            body: JSON.stringify({
+              creditDate: values.creditDate,
+              reason: values.reason,
+              items: [{ invoiceItemId: values.invoiceItemId, quantity: values.quantity }],
+            }),
+          });
+          invoiceDialog.close();
+          await showInvoice(invoice.id);
+        } catch (error) {
+          showInlineError(form, error.message);
+          submit.disabled = false;
+        }
+      });
+    } catch (error) {
+      alert(error.message);
+    }
+  }
+
+  function bindInvoiceDetails() {
+    content.querySelectorAll('.invoice-view').forEach((button) => {
+      button.addEventListener('click', () => showInvoice(Number(button.dataset.id)));
+    });
+  }
+
+  async function downloadInvoicePdf(invoiceId) {
+    try {
+      const response = await fetch(`/api/invoices/${invoiceId}/pdf`, {
+        headers: sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {},
+      });
+      if (response.status === 401) {
+        clearSession();
+        throw new Error('Your session expired. Please sign in again.');
+      }
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'The invoice PDF could not be generated.');
+      }
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `invoice-${invoiceId}.pdf`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      alert(error.message);
+    }
+  }
+
+  bindInvoiceDetails();
+  content.querySelectorAll('.invoice-pdf').forEach((button) => {
+    button.addEventListener('click', () => downloadInvoicePdf(Number(button.dataset.id)));
+  });
+  content.querySelectorAll('.invoice-email').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!window.confirm('Send this invoice to the customer email address on file?')) return;
+      try {
+        const result = await api(`/api/invoices/${button.dataset.id}/email`, { method: 'POST' });
+        alert(`Invoice email ${result.email.status}.`);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+  });
+  content.querySelectorAll('.invoice-edit').forEach((button) => {
+    button.addEventListener('click', () => editInvoice(Number(button.dataset.id)));
+  });
+  content.querySelectorAll('.invoice-issue').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Issue this invoice? Its financial details will be locked.')) return;
+      button.disabled = true;
+      try {
+        await api(`/api/invoices/${button.dataset.id}/issue`, { method: 'POST' });
+        await renderInvoices(content);
+      } catch (error) {
+        alert(error.message);
+        button.disabled = false;
+      }
+    });
+  });
+  content.querySelectorAll('.invoice-cancel').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Cancel this unpaid invoice? The record will be retained.')) return;
+      try {
+        await api(`/api/invoices/${button.dataset.id}/cancel`, { method: 'POST' });
+        await renderInvoices(content);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+  });
+  content.querySelectorAll('.invoice-pay').forEach((button) => {
+    button.addEventListener('click', async () => {
+      let invoice;
+      try {
+        invoice = (await api(`/api/invoices/${button.dataset.id}`)).invoice;
+      } catch (error) {
+        alert(error.message);
+        return;
+      }
+      const dialog = document.getElementById('invoice-payment-dialog');
+      dialog.innerHTML = `<form method="dialog" class="dialog-close"><button class="icon-button" aria-label="Close">×</button></form><h2>Record payment</h2><p>${escapeHtml(invoice.invoice_number)} · balance ${money(invoice.outstanding_cents, currency)}</p><form id="invoice-payment-form" class="record-form"><label>Amount (${escapeHtml(currency)})<input name="amount" type="number" min="0.01" step="0.01" max="${(invoice.outstanding_cents / 100).toFixed(2)}" required /></label><label>Payment date<input name="paymentDate" type="date" value="${today}" required /></label><label>Method<select name="paymentMethod"><option value="eft">EFT</option><option value="cash">Cash</option><option value="card">Card</option><option value="other">Other</option></select></label><label>Reference (optional)<input name="reference" maxlength="100" /></label><label class="invoice-address-field">Notes<textarea name="notes" maxlength="2000"></textarea></label><button class="button button-primary" type="submit">Save payment</button><p class="inline-feedback" aria-live="polite"></p></form>`;
+      dialog.showModal();
+      const paymentKey = crypto.randomUUID();
+      dialog.querySelector('#invoice-payment-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const values = Object.fromEntries(new FormData(form).entries());
+        const amountCents = centsFromInput(values.amount);
+        if (amountCents === null || amountCents <= 0) {
+          showInlineError(form, 'Enter a valid payment amount.');
+          return;
+        }
+        const submit = form.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        try {
+          await api(`/api/invoices/${invoice.id}/payments`, {
+            method: 'POST',
+            headers: { 'Idempotency-Key': paymentKey },
+            body: JSON.stringify({
+              amountCents,
+              paymentDate: values.paymentDate,
+              paymentMethod: values.paymentMethod,
+              reference: values.reference,
+              notes: values.notes,
+            }),
+          });
+          dialog.close();
+          await renderInvoices(content);
+        } catch (error) {
+          showInlineError(form, error.message);
+          submit.disabled = false;
+        }
+      });
+    });
+  });
+}
+
+async function renderPayables(content) {
+  const query = new URLSearchParams(payablesFilters);
+  query.set('page', '1');
+  query.set('pageSize', '50');
+  const [list, suppliersResponse, productsResponse, summaryResponse] = await Promise.all([
+    api(`/api/supplier-invoices?${query}`),
+    api('/api/expenses/suppliers'),
+    api('/api/products'),
+    api('/api/supplier-invoices/summary'),
+  ]);
+  const suppliers = suppliersResponse.suppliers || [];
+  const products = (productsResponse.products || []).filter((product) => Number(product.is_active));
+  const summary = summaryResponse.summary;
+  const currency = sessionInfo.business.currency;
+  const dateParts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: sessionInfo.business.timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date()).filter((part) => part.type !== 'literal')
+    .map((part) => [part.type, part.value]));
+  const today = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+  const lineEditor = () => `<fieldset class="invoice-line-editor supplier-invoice-line">
+    <legend>Supplier invoice item</legend>
+    <label>Product<select class="supplier-item-product"><option value="">Custom item / service</option>${products.map((product) => `<option value="${product.id}">${escapeHtml(product.name)}</option>`).join('')}</select></label>
+    <label>Description<input class="supplier-item-name" maxlength="191" required /></label>
+    <label>Quantity<input class="supplier-item-quantity" type="number" min="0.001" step="0.001" value="1" required /></label>
+    <label>Unit cost (${escapeHtml(currency)})<input class="supplier-item-price" type="number" min="0" step="0.01" value="0" required /></label>
+    <label>Tax rate (%)<input class="supplier-item-tax" type="number" min="0" max="100" step="0.01" value="0" required /></label>
+    <button class="text-link supplier-item-remove" type="button">Remove item</button>
+  </fieldset>`;
+  content.innerHTML = `<section class="page-heading"><div><span class="eyebrow">SUPPLIER FINANCES</span><h1>Supplier invoices</h1><p>Record supplier bills, link expenses, track payments, and receive ordered stock.</p></div></section>
+    <section class="kpi-grid report-kpis">
+      ${kpiCard('▤', 'Outstanding payables', money(summary.outstandingCents, currency), `${summary.invoiceCount} supplier invoices`, '', 'icon-blue')}
+      ${kpiCard('!', 'Overdue', money(summary.overdueCents, currency), `${summary.overdueCount} invoices past due`, '', 'icon-red')}
+      ${kpiCard('↗', 'Paid this month', money(summary.paidThisMonthCents, currency), `${summary.partiallyPaidCount} partially paid`, '', 'icon-green')}
+    </section>
+    <section class="panel form-panel"><h2>Record a supplier invoice</h2>${suppliers.length ? `<form id="supplier-invoice-form" class="record-form">
+      <label>Supplier<select name="supplierId" required><option value="">Select supplier</option>${suppliers.map((supplier) => `<option value="${supplier.id}">${escapeHtml(supplier.name)}</option>`).join('')}</select></label>
+      <label>Supplier invoice number<input name="supplierInvoiceNumber" maxlength="100" required /></label>
+      <label>Invoice date<input type="date" name="invoiceDate" value="${today}" required /></label>
+      <label>Received date<input type="date" name="receivedDate" value="${today}" required /></label>
+      <label>Due date<input type="date" name="dueDate" value="${today}" required /></label>
+      <div id="supplier-invoice-lines">${lineEditor()}</div>
+      <button class="button button-secondary" id="supplier-add-line" type="button">Add line item</button>
+      <label>Notes<textarea name="notes" maxlength="4000"></textarea></label>
+      <button class="button button-primary" type="submit">Save supplier invoice</button><p class="inline-feedback" aria-live="polite"></p>
+    </form>` : '<div class="table-empty"><strong>Add a supplier first</strong><span>Use Expenses → Suppliers to create a supplier record.</span><button class="button button-secondary" data-view="expenses">Open expenses</button></div>'}</section>
+    <section class="panel list-panel"><div class="panel-heading"><div><h2>Supplier invoice register</h2><p>${list.total} record${list.total === 1 ? '' : 's'} · linked expenses are not counted twice</p></div></div>
+      <form id="payables-filters" class="expense-filters">
+        <label>Search<input name="search" value="${escapeHtml(payablesFilters.get('search') || '')}" placeholder="Invoice number or supplier" /></label>
+        <label>Supplier<select name="supplierId"><option value="">All suppliers</option>${suppliers.map((supplier) => `<option value="${supplier.id}" ${payablesFilters.get('supplierId') === String(supplier.id) ? 'selected' : ''}>${escapeHtml(supplier.name)}</option>`).join('')}</select></label>
+        <label>Status<select name="status"><option value="">All statuses</option>${['received', 'partially_paid', 'paid', 'overdue', 'cancelled'].map((status) => `<option value="${status}" ${payablesFilters.get('status') === status ? 'selected' : ''}>${escapeHtml(status.replace('_', ' '))}</option>`).join('')}</select></label>
+        <button class="button button-secondary" type="submit">Apply filters</button><button class="button button-secondary" id="payables-clear" type="button">Clear</button>
+      </form>
+      ${list.supplierInvoices.length ? `<div class="table-scroll"><table><thead><tr><th>Supplier invoice</th><th>Supplier</th><th>Dates</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody>${list.supplierInvoices.map((invoice) => `<tr><td><strong>${escapeHtml(invoice.supplier_invoice_number)}</strong></td><td>${escapeHtml(invoice.supplier_name)}</td><td>${escapeHtml(invoice.invoice_date)}<small>Due ${escapeHtml(invoice.due_date)}</small></td><td>${money(invoice.total_cents, currency)}</td><td>${money(invoice.paid_cents, currency)}</td><td>${money(invoice.outstanding_cents, currency)}</td><td><span class="status-pill status-${escapeHtml(invoice.status)}">${escapeHtml(invoice.status.replace('_', ' '))}</span></td><td><div class="invoice-row-actions"><button class="text-link supplier-invoice-details" data-id="${invoice.id}" type="button">Details</button>${invoice.outstanding_cents > 0 && invoice.status !== 'cancelled' ? `<button class="text-link supplier-invoice-pay" data-id="${invoice.id}" data-balance="${invoice.outstanding_cents}" type="button">Record payment</button>` : ''}${!invoice.expense_id ? `<button class="text-link supplier-invoice-link" data-id="${invoice.id}" type="button">Link expense</button>` : ''}<button class="text-link supplier-invoice-stock" data-id="${invoice.id}" type="button">Receive stock</button><button class="text-link supplier-statement" data-supplier-id="${invoice.supplier_id}" type="button">Statement</button></div></td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No supplier invoices found</strong><span>Record a supplier invoice to track costs and deliveries.</span></div>'}
+    </section>
+    <dialog class="expense-dialog" id="supplier-invoice-details"></dialog>`;
+  content.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => {
+    currentView = button.dataset.view;
+    renderShell();
+    renderView(currentView);
+  }));
+  const invoiceForm = document.getElementById('supplier-invoice-form');
+  const lineContainer = document.getElementById('supplier-invoice-lines');
+  document.getElementById('supplier-add-line')?.addEventListener('click', () => {
+    lineContainer.insertAdjacentHTML('beforeend', lineEditor());
+  });
+  lineContainer?.addEventListener('change', (event) => {
+    if (!event.target.classList.contains('supplier-item-product')) return;
+    const product = products.find((item) => Number(item.id) === Number(event.target.value));
+    event.target.closest('.supplier-invoice-line').querySelector('.supplier-item-name').value = product?.name || '';
+  });
+  lineContainer?.addEventListener('click', (event) => {
+    if (!event.target.classList.contains('supplier-item-remove')) return;
+    if (lineContainer.querySelectorAll('.supplier-invoice-line').length === 1) {
+      showInlineError(invoiceForm, 'An invoice must contain at least one line item.');
+      return;
+    }
+    event.target.closest('.supplier-invoice-line').remove();
+  });
+  invoiceForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    const items = [];
+    for (const row of lineContainer.querySelectorAll('.supplier-invoice-line')) {
+      const unitPriceCents = centsFromInput(row.querySelector('.supplier-item-price').value);
+      const taxRateBps = taxRateBpsFromInput(row.querySelector('.supplier-item-tax').value || '0');
+      if (unitPriceCents === null || taxRateBps === null) {
+        showInlineError(form, 'Enter a valid unit cost and tax rate.');
+        return;
+      }
+      const productId = row.querySelector('.supplier-item-product').value;
+      items.push({
+        productId: productId || null,
+        itemType: productId ? 'product' : 'custom',
+        name: row.querySelector('.supplier-item-name').value,
+        quantity: row.querySelector('.supplier-item-quantity').value,
+        unitPriceCents,
+        taxRateBps,
+      });
+    }
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      await api('/api/supplier-invoices', {
+        method: 'POST',
+        body: JSON.stringify({ ...values, items }),
+      });
+      await renderPayables(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+      submit.disabled = false;
+    }
+  });
+  document.getElementById('payables-filters').addEventListener('submit', (event) => {
+    event.preventDefault();
+    payablesFilters = new URLSearchParams();
+    for (const [key, value] of new FormData(event.currentTarget).entries()) {
+      if (value) payablesFilters.set(key, value);
+    }
+    renderPayables(content).catch((error) => showInlineError(event.currentTarget, error.message));
+  });
+  document.getElementById('payables-clear').addEventListener('click', () => {
+    payablesFilters = new URLSearchParams();
+    renderPayables(content).catch((error) => alert(error.message));
+  });
+  const detailsDialog = document.getElementById('supplier-invoice-details');
+  content.querySelectorAll('.supplier-invoice-details').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const invoice = (await api(`/api/supplier-invoices/${button.dataset.id}`)).supplierInvoice;
+      detailsDialog.innerHTML = `<form method="dialog" class="dialog-close"><button class="icon-button" aria-label="Close">×</button></form><h2>${escapeHtml(invoice.supplier_invoice_number)}</h2><p>${escapeHtml(invoice.supplier_name)} · ${escapeHtml(invoice.status.replace('_', ' '))}</p><dl><div><dt>Invoice / due</dt><dd>${escapeHtml(invoice.invoice_date)} / ${escapeHtml(invoice.due_date)}</dd></div><div><dt>Total / paid / balance</dt><dd>${money(invoice.total_cents, currency)} / ${money(invoice.paid_cents, currency)} / ${money(invoice.outstanding_cents, currency)}</dd></div><div><dt>Linked expense</dt><dd>${invoice.linked_expense_id ? `#${invoice.linked_expense_id}` : 'No linked expense'}</dd></div></dl><h3>Items and receiving</h3><div class="table-scroll"><table><thead><tr><th>Item</th><th>Ordered</th><th>Received</th><th>Unit cost</th><th>Total</th></tr></thead><tbody>${invoice.items.map((item) => `<tr><td>${escapeHtml(item.item_name)}</td><td>${Number(item.quantity_millis) / 1000}</td><td>${Number(item.received_quantity_millis) / 1000}</td><td>${money(item.unit_price_cents, currency)}</td><td>${money(item.total_cents, currency)}</td></tr>`).join('')}</tbody></table></div><h3>Payments</h3>${invoice.payments.length ? `<div class="table-scroll"><table><thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Amount</th></tr></thead><tbody>${invoice.payments.map((payment) => `<tr><td>${escapeHtml(dateInputValue(payment.payment_date))}</td><td>${escapeHtml(payment.payment_method)}</td><td>${escapeHtml(payment.reference || '—')}</td><td>${money(payment.amount_cents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted-copy">No payments recorded.</p>'}`;
+      detailsDialog.showModal();
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  content.querySelectorAll('.supplier-invoice-pay').forEach((button) => button.addEventListener('click', async () => {
+    const amount = window.prompt(`Payment amount (${currency})`, (Number(button.dataset.balance) / 100).toFixed(2));
+    if (amount === null) return;
+    const amountCents = centsFromInput(amount);
+    if (amountCents === null || amountCents <= 0) return alert('Enter a valid payment amount.');
+    const paymentMethod = window.prompt('Payment method (cash, EFT, card, etc.)', 'eft');
+    if (!paymentMethod) return;
+    try {
+      await api(`/api/supplier-invoices/${button.dataset.id}/payments`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': button.dataset.idempotencyKey || (button.dataset.idempotencyKey = crypto.randomUUID()) },
+        body: JSON.stringify({ amountCents, paymentDate: today, paymentMethod }),
+      });
+      await renderPayables(content);
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  content.querySelectorAll('.supplier-invoice-link').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const invoice = (await api(`/api/supplier-invoices/${button.dataset.id}`)).supplierInvoice;
+      const existing = (await api(
+        `/api/expenses?search=${encodeURIComponent(invoice.supplier_invoice_number)}&page=1&pageSize=100`
+      )).expenses.filter((expense) =>
+        Number(expense.supplier_id) === Number(invoice.supplier_id) &&
+        expense.reference_number === invoice.supplier_invoice_number &&
+        expense.status !== 'cancelled'
+      );
+      let payload = {};
+      if (existing.length) {
+        const choices = existing.map((expense) =>
+          `${expense.id}: ${expense.title} - ${money(expense.total_cents, currency)}`
+        ).join('\n');
+        const selected = window.prompt(
+          `An expense already uses this invoice reference. Enter the matching expense ID:\n${choices}`,
+          String(existing[0].id)
+        );
+        if (selected === null) return;
+        if (!existing.some((expense) => String(expense.id) === selected.trim())) {
+          return alert('Select an expense ID from the list to avoid duplicating the payable.');
+        }
+        payload = { expenseId: Number(selected) };
+      } else if (!window.confirm('Create and link an expense for this supplier invoice?')) {
+        return;
+      }
+      await api(`/api/supplier-invoices/${button.dataset.id}/expense`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      await renderPayables(content);
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  content.querySelectorAll('.supplier-invoice-stock').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const invoice = (await api(`/api/supplier-invoices/${button.dataset.id}`)).supplierInvoice;
+      const remaining = invoice.items.filter((item) =>
+        item.item_type === 'product' && item.product_id &&
+        Number(item.received_quantity_millis) < Number(item.quantity_millis)
+      );
+      if (!remaining.length) return alert('No unreceived product lines remain.');
+      const receiveItems = [];
+      for (const item of remaining) {
+        const left = (Number(item.quantity_millis) - Number(item.received_quantity_millis)) / 1000;
+        const input = window.prompt(`Whole units of ${item.item_name} to receive (up to ${left})`, String(Math.floor(left)));
+        if (input === null) continue;
+        const quantity = Number(input);
+        if (!Number.isSafeInteger(quantity) || quantity <= 0 || quantity > left) {
+          return alert('Enter a positive whole-number quantity within the remaining amount.');
+        }
+        receiveItems.push({
+          supplierInvoiceItemId: item.id,
+          quantity,
+          updateCost: window.confirm(`Update product cost to ${money(item.unit_price_cents, currency)}?`),
+        });
+      }
+      if (!receiveItems.length) return;
+      await api(`/api/supplier-invoices/${button.dataset.id}/stock-receipts`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': button.dataset.idempotencyKey || (button.dataset.idempotencyKey = crypto.randomUUID()) },
+        body: JSON.stringify({ items: receiveItems }),
+      });
+      await renderPayables(content);
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  content.querySelectorAll('.supplier-statement').forEach((button) => button.addEventListener('click', async () => {
+    const startDate = window.prompt('Statement start date (YYYY-MM-DD)', `${today.slice(0, 7)}-01`);
+    if (!startDate) return;
+    const endDate = window.prompt('Statement end date (YYYY-MM-DD)', today);
+    if (!endDate) return;
+    const params = new URLSearchParams({ startDate, endDate });
+    try {
+      await downloadAuthenticatedFile(
+        `/api/suppliers/${button.dataset.supplierId}/statement.pdf?${params}`,
+        `supplier-${button.dataset.supplierId}-statement.pdf`
+      );
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+}
+
 function expenseDateForPeriod(period) {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: sessionInfo.business.timezone,
@@ -508,6 +1235,145 @@ function expenseDateForPeriod(period) {
   if (period === 'quarter') return [addDays(today, -89), today];
   if (period === 'year') return [`${today.slice(0, 4)}-01-01`, today];
   return ['', ''];
+}
+
+async function renderFinancialDocuments(content) {
+  const [documentsResponse, supplierResponse, expenseResponse, invoiceResponse, extractionStatus] =
+    await Promise.all([
+      api('/api/documents'),
+      api('/api/supplier-invoices?page=1&pageSize=100'),
+      api('/api/expenses?page=1&pageSize=100'),
+      api('/api/invoices?page=1&pageSize=100'),
+      api('/api/documents/extraction-status'),
+    ]);
+  const suppliers = supplierResponse.supplierInvoices || [];
+  const expenses = expenseResponse.expenses || [];
+  const invoices = invoiceResponse.invoices || [];
+  const extraction = extractionStatus.extraction;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'expense-dialog document-preview-dialog';
+  const optionsFor = (type) => {
+    const records = type === 'supplier_invoice'
+      ? suppliers.map((record) => ({ id: record.id, name: `${record.supplier_invoice_number} · ${record.supplier_name}` }))
+      : type === 'expense'
+        ? expenses.map((record) => ({ id: record.id, name: record.title }))
+        : invoices.map((record) => ({ id: record.id, name: `${record.invoice_number || 'Draft'} · ${record.customer_name}` }));
+    return records.map((record) => `<option value="${record.id}">${escapeHtml(record.name)}</option>`).join('');
+  };
+  content.innerHTML = `<section class="page-heading"><div><span class="eyebrow">PRIVATE BUSINESS FILES</span><h1>Financial documents</h1><p>Search, preview, and download supplier invoices, receipts, and customer invoice attachments. Files are stored outside public web assets.</p></div></section>
+    <section class="panel form-panel"><h2>Upload a financial document</h2><form id="document-upload-form" class="record-form">
+      <label>Attach to<select name="recordType" id="document-record-type"><option value="supplier_invoice">Supplier invoice</option><option value="expense">Expense</option><option value="invoice">Customer invoice</option></select></label>
+      <label>Financial record<select name="recordId" id="document-record-id" required>${optionsFor('supplier_invoice')}</select></label>
+      <label>File (PDF, JPEG, PNG, or WebP; maximum 10 MB)<input type="file" name="file" accept="application/pdf,image/jpeg,image/png,image/webp" required /></label>
+      <button class="button button-primary" type="submit">Upload document</button><p class="inline-feedback" aria-live="polite"></p>
+    </form></section>
+    <section class="panel list-panel"><div class="panel-heading"><div><h2>Document library</h2><p>${documentsResponse.documents.length} document${documentsResponse.documents.length === 1 ? '' : 's'} · extraction ${extraction.configured ? `available (${escapeHtml(extraction.provider)})` : 'not configured'}</p></div></div>
+      <form class="expense-filters" id="document-search-form"><label>Search<input name="search" placeholder="Filename, supplier, or invoice number" /></label><label>Type<select name="documentType"><option value="">All types</option><option value="supplier_invoice">Supplier invoice</option><option value="expense_receipt">Expense receipt</option><option value="supporting_document">Supporting document</option><option value="business_logo">Business logo</option></select></label><button class="button button-secondary" type="submit">Search</button></form>
+      <div id="document-list">${renderDocumentRows(documentsResponse.documents, extraction.configured)}</div>
+    </section>`;
+  content.append(dialog);
+  const recordType = document.getElementById('document-record-type');
+  const recordId = document.getElementById('document-record-id');
+  recordType.addEventListener('change', () => {
+    recordId.innerHTML = optionsFor(recordType.value);
+    recordId.required = recordId.options.length > 0;
+  });
+  document.getElementById('document-upload-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const file = form.elements.file.files[0];
+    if (!file) return;
+    const type = form.elements.recordType.value;
+    const id = form.elements.recordId.value;
+    const endpoint = type === 'supplier_invoice'
+      ? `/api/supplier-invoices/${id}/documents`
+      : type === 'expense'
+        ? `/api/expenses/${id}/documents`
+        : `/api/invoices/${id}/documents`;
+    const feedback = form.querySelector('.inline-feedback');
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      await api(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type, 'X-File-Name': encodeURIComponent(file.name) },
+        body: file,
+      });
+      await renderFinancialDocuments(content);
+    } catch (error) {
+      feedback.textContent = error.message;
+      feedback.className = 'inline-feedback error';
+      submit.disabled = false;
+    }
+  });
+  document.getElementById('document-search-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const query = new URLSearchParams(new FormData(event.currentTarget));
+    for (const [key, value] of [...query.entries()]) if (!value) query.delete(key);
+    try {
+      const result = await api(`/api/documents?${query}`);
+      document.getElementById('document-list').innerHTML =
+        renderDocumentRows(result.documents, extraction.configured);
+      bindDocumentActions();
+    } catch (error) {
+      showInlineError(event.currentTarget, error.message);
+    }
+  });
+  function renderDocumentRows(documents, extractionConfigured) {
+    return documents.length ? `<div class="table-scroll"><table><thead><tr><th>File</th><th>Type</th><th>Related record</th><th>Uploaded</th><th>Size</th><th>Actions</th></tr></thead><tbody>${documents.map((document) => {
+      const related = document.supplier_invoice_number
+        ? `${document.supplier_invoice_number} · ${document.supplier_name}`
+        : document.invoice_number
+          ? document.invoice_number
+          : document.expense_title || 'Business file';
+      return `<tr><td><strong>${escapeHtml(document.original_filename)}</strong></td><td>${escapeHtml(document.document_type.replace('_', ' '))}</td><td>${escapeHtml(related)}</td><td>${escapeHtml(dateTime(document.uploaded_at, sessionInfo.business.timezone))}</td><td>${Math.ceil(document.file_size_bytes / 1024)} KB</td><td><div class="invoice-row-actions"><button class="text-link document-preview" data-id="${document.id}" data-name="${escapeHtml(document.original_filename)}" type="button">Preview</button><button class="text-link document-download" data-id="${document.id}" data-name="${escapeHtml(document.original_filename)}" type="button">Download</button><button class="text-link document-delete" data-id="${document.id}" type="button">Delete</button>${extractionConfigured && ['supplier_invoice', 'supporting_document'].includes(document.document_type) ? `<button class="text-link document-extract" data-id="${document.id}" type="button">Extract fields</button>` : ''}</div></td></tr>`;
+    }).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No financial documents found</strong><span>Uploaded files remain private and are only available to your business.</span></div>';
+  }
+  function bindDocumentActions() {
+    document.querySelectorAll('.document-preview').forEach((button) => button.addEventListener('click', async () => {
+      try {
+        const blob = await authenticatedBlob(`/api/documents/${button.dataset.id}/preview`);
+        const url = URL.createObjectURL(blob);
+        dialog.innerHTML = `<form method="dialog" class="dialog-close"><button class="icon-button" aria-label="Close">×</button></form><h2>${escapeHtml(button.dataset.name)}</h2><iframe title="${escapeHtml(button.dataset.name)}" sandbox="" src="${url}"></iframe>`;
+        dialog.addEventListener('close', () => URL.revokeObjectURL(url), { once: true });
+        dialog.showModal();
+      } catch (error) {
+        alert(error.message);
+      }
+    }));
+    document.querySelectorAll('.document-download').forEach((button) => button.addEventListener('click', () => {
+      downloadAuthenticatedFile(`/api/documents/${button.dataset.id}`, button.dataset.name)
+        .catch((error) => alert(error.message));
+    }));
+    document.querySelectorAll('.document-delete').forEach((button) => button.addEventListener('click', async () => {
+      if (!window.confirm('Remove this document from the business library?')) return;
+      try {
+        await api(`/api/documents/${button.dataset.id}`, { method: 'DELETE' });
+        await renderFinancialDocuments(content);
+      } catch (error) {
+        alert(error.message);
+      }
+    }));
+    document.querySelectorAll('.document-extract').forEach((button) => button.addEventListener('click', async () => {
+      if (!window.confirm('This sends the selected document to the configured external extraction provider. Continue?')) return;
+      try {
+        const result = await api(`/api/documents/${button.dataset.id}/extract`, {
+          method: 'POST',
+          body: JSON.stringify({ consentToExternalProcessing: true }),
+        });
+        const approved = window.confirm(`Review these unverified suggestions before use:\n\n${JSON.stringify(result.extraction.fields, null, 2)}\n\nChoose OK to confirm or Cancel to reject.`);
+        await api(`/api/documents/${button.dataset.id}/extractions/${result.extraction.id}/confirm`, {
+          method: 'POST',
+          body: JSON.stringify({ confirmed: approved }),
+        });
+        alert(approved ? 'Suggestions confirmed for human review.' : 'Suggestions rejected.');
+      } catch (error) {
+        alert(error.message);
+      }
+    }));
+  }
+  bindDocumentActions();
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
 }
 
 async function renderExpenses(content) {
@@ -796,15 +1662,23 @@ async function renderExpenses(content) {
 
 async function renderReports(content) {
   const query = new URLSearchParams({ period: reportPeriod });
+  if (reportStatusFilter) query.set('status', reportStatusFilter);
+  if (reportType === 'receivables' && reportEntityFilter) query.set('customerId', reportEntityFilter);
+  if (reportType === 'payables' && reportEntityFilter) query.set('supplierId', reportEntityFilter);
   if (reportPeriod === 'custom') {
     if (reportStartDate) query.set('startDate', reportStartDate);
     if (reportEndDate) query.set('endDate', reportEndDate);
   }
   const rangeQuery = query.toString();
-  const [overview, report] = await Promise.all([
+  const [overview, report, customerResponse, supplierResponse] = await Promise.all([
     api(`/api/reports/overview?${rangeQuery}`),
     reportType === 'profit-loss' ? Promise.resolve(null) : api(`/api/reports/${reportType}?${rangeQuery}`),
+    reportType === 'receivables' ? api('/api/customers') : Promise.resolve({ customers: [] }),
+    reportType === 'payables' ? api('/api/expenses/suppliers') : Promise.resolve({ suppliers: [] }),
   ]);
+  const reportEntities = reportType === 'receivables'
+    ? customerResponse.customers || []
+    : supplierResponse.suppliers || [];
   const currency = sessionInfo.business.currency;
   const range = overview.range;
   const periodOptions = [
@@ -836,6 +1710,28 @@ async function renderReports(content) {
     reportContent = `<section class="panel report-panel"><div class="panel-heading"><div><h2>Profit and loss estimate</h2><p>Revenue excludes sales tax; recorded expenses include tax. This is not a formal accounting statement.</p></div></div><div class="table-scroll"><table><thead><tr><th>Measure</th><th>Amount</th></tr></thead><tbody><tr><td>Sales revenue</td><td>${amount(overview.revenueCents)}</td></tr><tr><td>Cost of sales</td><td>${amount(overview.cogsCents)}</td></tr><tr><td>Gross profit</td><td>${amount(overview.grossProfitCents)}</td></tr><tr><td>Recorded expenses</td><td>${amount(overview.operatingExpensesCents)}</td></tr><tr><td><strong>Estimated operating result</strong></td><td><strong>${amount(overview.netOperatingResultCents)}</strong></td></tr></tbody></table></div><p class="form-help">Expense totals can include stock purchases already counted in cost of sales, so the estimate may double-count them. Review your records with an accountant.</p></section>`;
   } else if (reportType === 'activity') {
     reportContent = `<section class="panel report-panel"><div class="panel-heading"><div><h2>Recorded system activity</h2><p>Inventory movements and expense payments by recording time. This is not a complete audit log; edits and other changes may not be recorded.</p></div></div>${report.truncated ? '<p class="form-help">Showing the latest 500 events. Narrow the date range to see earlier events.</p>' : ''}${report.events.length ? `<div class="table-scroll"><table><thead><tr><th>Recorded at</th><th>Event</th><th>Item</th><th>Details</th></tr></thead><tbody>${report.events.map((row) => `<tr><td>${escapeHtml(dateTime(row.timestamp, sessionInfo.business.timezone))}</td><td>${escapeHtml(row.type)}</td><td>${escapeHtml(row.subject)}</td><td>${escapeHtml(row.detail)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No recorded inventory movements or expense payments in this period.</div>'}</section>`;
+  } else if (reportType === 'receivables' || reportType === 'payables') {
+    const receivables = reportType === 'receivables';
+    const parties = receivables ? report.customers : report.suppliers;
+    const ageing = [
+      ['Current', report.aging.currentCents],
+      ['1–30 days', report.aging.days1To30Cents],
+      ['31–60 days', report.aging.days31To60Cents],
+      ['61–90 days', report.aging.days61To90Cents],
+      ['Over 90 days', report.aging.over90DaysCents],
+    ];
+    reportContent = `<section class="kpi-grid report-kpis">
+      ${kpiCard('▤', 'Outstanding', money(report.summary.outstandingCents, currency), `${report.invoices.length} invoice${report.invoices.length === 1 ? '' : 's'} in result`, '', 'icon-blue')}
+      ${kpiCard('!', 'Overdue', money(report.summary.overdueCents, currency), `${report.summary.overdueCount} overdue invoice${report.summary.overdueCount === 1 ? '' : 's'}`, '', 'icon-red')}
+      ${kpiCard('↗', receivables ? 'Payments received' : 'Payments made', money(receivables ? report.summary.paymentsReceivedCents : report.summary.paymentsMadeCents, currency), `${receivables ? report.summary.invoicesIssuedCount : report.summary.invoicesReceivedCount} invoices ${receivables ? 'issued' : 'received'} in period`, '', 'icon-green')}
+      ${kpiCard('⌁', 'Part-paid', String(report.summary.partiallyPaidCount), `Average payment time ${report.summary.averagePaymentDays === null ? '—' : `${report.summary.averagePaymentDays} days`}`, '', 'icon-amber')}
+    </section>
+    ${report.truncated ? '<p class="form-help">Showing the first 1,000 invoices; narrow the filters to see a complete ageing total.</p>' : ''}
+    <section class="dashboard-grid lower-grid">
+      <article class="panel report-panel"><div class="panel-heading"><div><h2>Ageing summary</h2><p>Balances as of ${escapeHtml(report.range.asOfDate)}</p></div></div><div class="table-scroll"><table><thead><tr><th>Age</th><th>Outstanding</th></tr></thead><tbody>${ageing.map(([label, amount]) => `<tr><td>${label}</td><td>${money(amount, currency)}</td></tr>`).join('')}</tbody></table></div></article>
+      <article class="panel report-panel"><div class="panel-heading"><div><h2>${receivables ? 'Customer balances' : 'Supplier balances'}</h2><p>Ranked by overdue balance</p></div></div>${parties.length ? `<div class="table-scroll"><table><thead><tr><th>${receivables ? 'Customer' : 'Supplier'}</th><th>Open invoices</th><th>Overdue</th><th>Outstanding</th></tr></thead><tbody>${parties.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${row.invoiceCount}</td><td>${money(row.overdueCents, currency)}</td><td>${money(row.outstandingCents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No outstanding balances.</div>'}</article>
+    </section>
+    <section class="panel report-panel"><div class="panel-heading"><div><h2>${receivables ? 'Customer invoices' : 'Supplier invoices'}</h2><p>POS sales are excluded; linked supplier expenses are not counted twice.</p></div></div>${report.invoices.length ? `<div class="table-scroll"><table><thead><tr><th>${receivables ? 'Customer' : 'Supplier'}</th><th>Invoice</th><th>Invoice date</th><th>Due date</th><th>Amount</th><th>Paid</th>${receivables ? '<th>Credited</th>' : ''}<th>Outstanding</th><th>Days overdue</th></tr></thead><tbody>${report.invoices.map((row) => `<tr><td>${escapeHtml(receivables ? row.customer_name : row.supplier_name)}</td><td><strong>${escapeHtml(receivables ? row.invoice_number : row.supplier_invoice_number)}</strong></td><td>${escapeHtml(row.invoice_date)}</td><td>${escapeHtml(row.due_date)}</td><td>${money(row.total_cents, currency)}</td><td>${money(row.paid_cents, currency)}</td>${receivables ? `<td>${money(row.credited_cents, currency)}</td>` : ''}<td><strong>${money(row.outstanding_cents, currency)}</strong></td><td>${row.days_overdue}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No invoices match these filters.</div>'}</section>`;
   } else {
     reportContent = `<section class="panel report-panel"><div class="panel-heading"><div><h2>Customer activity</h2><p>Spend and transaction counts for the selected period.</p></div></div>${report.customers.length ? `<div class="table-scroll"><table><thead><tr><th>Customer</th><th>Email</th><th>Transactions</th><th>Average spend</th><th>Total spend</th><th>Last purchase</th></tr></thead><tbody>${report.customers.map((row) => `<tr><td><strong>${escapeHtml(row.name)}</strong></td><td>${escapeHtml(row.email || '—')}</td><td>${row.transactionCount}</td><td>${money(row.averageSpendCents, currency)}</td><td>${money(row.spendCents, currency)}</td><td>${escapeHtml(row.lastPurchaseAt ? dateTime(row.lastPurchaseAt, sessionInfo.business.timezone) : '—')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No customers found.</div>'}</section>`;
   }
@@ -843,19 +1739,20 @@ async function renderReports(content) {
   content.innerHTML = `
     <section class="page-heading"><div><span class="eyebrow">BUSINESS PERFORMANCE</span><h1>Reports</h1><p>Review sales, spending, stock and customer activity for ${escapeHtml(overview.business.name)}.</p><div id="report-export-feedback" class="inline-feedback" role="status"></div></div><div class="heading-actions"><button class="button button-secondary" id="report-print" type="button">Print / Save as PDF</button><button class="button button-secondary" id="report-export" type="button">Export CSV</button></div></section>
     <section class="panel report-controls"><form id="report-filter-form" class="expense-filters">
-      <label>Report<select id="report-type" name="type"><option value="sales" ${reportType === 'sales' ? 'selected' : ''}>Sales</option><option value="expenses" ${reportType === 'expenses' ? 'selected' : ''}>Expenses</option><option value="profit-loss" ${reportType === 'profit-loss' ? 'selected' : ''}>Profit &amp; loss estimate</option><option value="activity" ${reportType === 'activity' ? 'selected' : ''}>System activity</option><option value="inventory" ${reportType === 'inventory' ? 'selected' : ''}>Inventory</option><option value="customers" ${reportType === 'customers' ? 'selected' : ''}>Customers</option></select></label>
+      <label>Report<select id="report-type" name="type"><option value="sales" ${reportType === 'sales' ? 'selected' : ''}>Sales</option><option value="expenses" ${reportType === 'expenses' ? 'selected' : ''}>Expenses</option><option value="profit-loss" ${reportType === 'profit-loss' ? 'selected' : ''}>Profit &amp; loss estimate</option><option value="activity" ${reportType === 'activity' ? 'selected' : ''}>System activity</option><option value="inventory" ${reportType === 'inventory' ? 'selected' : ''}>Inventory</option><option value="customers" ${reportType === 'customers' ? 'selected' : ''}>Customers</option><option value="receivables" ${reportType === 'receivables' ? 'selected' : ''}>Accounts receivable</option><option value="payables" ${reportType === 'payables' ? 'selected' : ''}>Accounts payable</option></select></label>
       <label>Period<select id="report-period" name="period">${periodOptions.map(([value, label]) => `<option value="${value}" ${reportPeriod === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      ${reportType === 'receivables' || reportType === 'payables' ? `<label>${reportType === 'receivables' ? 'Customer' : 'Supplier'}<select name="entityId"><option value="">All</option>${reportEntities.map((entity) => `<option value="${entity.id}" ${String(entity.id) === reportEntityFilter ? 'selected' : ''}>${escapeHtml(entity.name)}</option>`).join('')}</select></label><label>Balance status<select name="status"><option value="" ${!reportStatusFilter ? 'selected' : ''}>All balances</option><option value="outstanding" ${reportStatusFilter === 'outstanding' ? 'selected' : ''}>Outstanding</option><option value="overdue" ${reportStatusFilter === 'overdue' ? 'selected' : ''}>Overdue</option><option value="partially_paid" ${reportStatusFilter === 'partially_paid' ? 'selected' : ''}>Partially paid</option><option value="paid" ${reportStatusFilter === 'paid' ? 'selected' : ''}>Paid</option></select></label>` : ''}
       ${reportPeriod === 'custom' ? `<label>From<input type="date" name="startDate" value="${escapeHtml(reportStartDate || range.startDate)}" required /></label><label>To<input type="date" name="endDate" value="${escapeHtml(reportEndDate || range.endDate)}" required /></label>` : ''}
       ${reportType === 'inventory' ? '<span class="report-range-note">Stock and valuation show current inventory.</span>' : `<span class="report-range-note">Showing ${escapeHtml(range.startDate)} to ${escapeHtml(range.endDate)}</span>`}
       <button class="button button-secondary" type="submit">Apply</button>
     </form></section>
     <section class="kpi-grid report-kpis">
-      ${kpiCard('↗', 'Sales revenue', money(overview.revenueCents, currency), `${overview.transactionCount} completed sales`, '', 'icon-green')}
+      ${reportType === 'receivables' || reportType === 'payables' ? '' : `${kpiCard('↗', 'Sales revenue', money(overview.revenueCents, currency), `${overview.transactionCount} completed sales`, '', 'icon-green')}
       ${kpiCard('−', 'Operating expenses', money(overview.operatingExpensesCents, currency), `${overview.overdueExpenseCount} overdue expense${overview.overdueExpenseCount === 1 ? '' : 's'}`, '', 'icon-red')}
       ${kpiCard('⌁', 'Gross profit', money(overview.grossProfitCents, currency), overview.costCoverageComplete ? `${overview.grossMarginPct ?? 0}% margin` : `Estimate: ${overview.unknownCostUnits} units have missing costs treated as zero`, '', 'icon-amber')}
       ${kpiCard('◎', 'Net operating result', money(overview.netOperatingResultCents, currency), overview.costCoverageComplete ? 'Gross profit less recorded expenses' : 'Estimate: missing sale-time costs treated as zero', '', 'icon-blue')}
       ${kpiCard('▤', 'Stock value', money(overview.inventory.valuationCents, currency), overview.inventory.valuationComplete ? `${overview.inventory.lowStockCount} low · ${overview.inventory.outOfStockCount} out of stock` : 'Estimate — missing product costs treated as zero', '', 'icon-violet')}
-      ${kpiCard('◎', 'Customers', String(overview.customers.total), `${overview.customers.newInPeriod} new in selected period`, '', 'icon-teal')}
+      ${kpiCard('◎', 'Customers', String(overview.customers.total), `${overview.customers.newInPeriod} new in selected period`, '', 'icon-teal')}`}
     </section>
     <div class="report-caveats">${overview.refundedCount ? `${overview.refundedCount} fully refunded sale(s), totalling ${money(overview.refundedCents, currency)}, are excluded from revenue. ` : ''}${overview.inventory.valuationComplete ? '' : 'Stock value is an estimate: missing product costs are treated as zero and may understate value. Add costs under Products & Services. '}${overview.costCoverageComplete ? '' : 'Profit is an estimate: missing sale-time costs are treated as zero and may overstate profit. Adding product costs helps future sales but does not change historical sale snapshots.'}</div>
     ${reportContent}
@@ -901,10 +1798,14 @@ async function renderReports(content) {
     const values = Object.fromEntries(new FormData(form).entries());
     reportStartDate = values.startDate || '';
     reportEndDate = values.endDate || '';
+    reportStatusFilter = values.status || '';
+    reportEntityFilter = values.entityId || '';
     renderView('reports');
   });
   document.getElementById('report-type').addEventListener('change', (event) => {
     reportType = event.target.value;
+    reportStatusFilter = '';
+    reportEntityFilter = '';
     renderView('reports');
   });
   document.getElementById('report-period').addEventListener('change', (event) => {
@@ -938,7 +1839,45 @@ async function renderProductsLegacy(content) {
 
 async function renderCustomers(content) {
   const customers = (await api('/api/customers')).customers || [];
-  content.innerHTML = `<section class="page-heading"><div><span class="eyebrow">RELATIONSHIPS</span><h1>Customers</h1><p>Keep customer details and return visits connected to your business.</p></div></section><section class="panel form-panel"><h2>Add a customer</h2><form id="customer-form" class="record-form"><label>Name<input name="name" required /></label><label>Email<input type="email" name="email" /></label><label>Phone<input name="phone" /></label><button class="button button-primary" type="submit">Add customer</button></form></section><section class="panel list-panel"><div class="panel-heading"><div><h2>Customer directory</h2><p>${customers.length} registered customer${customers.length === 1 ? '' : 's'}</p></div></div>${customers.length ? `<div class="table-scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Loyalty points</th><th>Added</th></tr></thead><tbody>${customers.map((customer) => `<tr><td><strong>${escapeHtml(customer.name)}</strong></td><td>${escapeHtml(customer.email || '—')}</td><td>${escapeHtml(customer.phone || '—')}</td><td>${customer.loyalty_points}</td><td>${escapeHtml(customer.created_at.slice(0, 10))}</td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No customers yet</strong><span>Customer records you add will appear here.</span></div>'}</section>`;
+  const currency = sessionInfo.business.currency;
+  content.innerHTML = `<section class="page-heading"><div><span class="eyebrow">RELATIONSHIPS</span><h1>Customers</h1><p>Keep customer details, invoice balances, receipts, and statements together.</p></div></section><section class="panel form-panel"><h2>Add a customer</h2><form id="customer-form" class="record-form"><label>Name<input name="name" required /></label><label>Email<input type="email" name="email" /></label><label>Phone<input name="phone" /></label><button class="button button-primary" type="submit">Add customer</button></form></section><section class="panel list-panel"><div class="panel-heading"><div><h2>Customer directory</h2><p>${customers.length} registered customer${customers.length === 1 ? '' : 's'}</p></div></div>${customers.length ? `<div class="table-scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Loyalty points</th><th>Added</th><th>Financials</th></tr></thead><tbody>${customers.map((customer) => `<tr><td><strong>${escapeHtml(customer.name)}</strong></td><td>${escapeHtml(customer.email || '—')}</td><td>${escapeHtml(customer.phone || '—')}</td><td>${customer.loyalty_points}</td><td>${escapeHtml(customer.created_at.slice(0, 10))}</td><td><button class="text-link customer-financials" data-id="${customer.id}" data-name="${escapeHtml(customer.name)}" type="button">History / statement</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No customers yet</strong><span>Customer records you add will appear here.</span></div>'}</section><dialog class="expense-dialog" id="customer-financial-dialog"></dialog>`;
+  const financialDialog = document.getElementById('customer-financial-dialog');
+  content.querySelectorAll('.customer-financials').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const financials = await api(`/api/customers/${button.dataset.id}/financial`);
+      const summary = financials.summary;
+      financialDialog.innerHTML = `<form method="dialog" class="dialog-close"><button class="icon-button" aria-label="Close">×</button></form><h2>${escapeHtml(financials.customer.name)} · financial history</h2><dl><div><dt>Invoiced</dt><dd>${money(summary.totalInvoicedCents, currency)}</dd></div><div><dt>Paid</dt><dd>${money(summary.totalPaidCents, currency)}</dd></div><div><dt>Outstanding</dt><dd>${money(summary.outstandingCents, currency)}</dd></div><div><dt>Overdue</dt><dd>${money(summary.overdueCents, currency)}</dd></div></dl><div class="invoice-form-actions"><button class="button button-secondary customer-statement" data-format="pdf" type="button">Download PDF statement</button><button class="button button-secondary customer-statement" data-format="csv" type="button">Download CSV statement</button></div><h3>Invoices</h3>${financials.invoices.length ? `<div class="table-scroll"><table><thead><tr><th>Invoice</th><th>Date / due</th><th>Total</th><th>Paid</th><th>Credited</th><th>Balance</th><th>Status</th></tr></thead><tbody>${financials.invoices.map((invoice) => `<tr><td>${escapeHtml(invoice.invoice_number)}</td><td>${escapeHtml(dateInputValue(invoice.invoice_date))} / ${escapeHtml(dateInputValue(invoice.due_date))}</td><td>${money(invoice.total_cents, currency)}</td><td>${money(invoice.paid_cents, currency)}</td><td>${money(invoice.credited_cents, currency)}</td><td>${money(invoice.outstanding_cents, currency)}</td><td>${escapeHtml(invoice.display_status.replace('_', ' '))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted-copy">No issued customer invoices.</p>'}<h3>Recent payments</h3>${financials.payments.length ? `<div class="table-scroll"><table><thead><tr><th>Receipt</th><th>Invoice</th><th>Date</th><th>Amount</th><th>PDF</th></tr></thead><tbody>${financials.payments.map((payment) => `<tr><td>${escapeHtml(payment.receipt_number || '—')}</td><td>${escapeHtml(payment.invoice_number || '')}</td><td>${escapeHtml(dateInputValue(payment.payment_date))}</td><td>${money(payment.amount_cents, currency)}</td><td><button class="text-link customer-receipt" data-id="${payment.id}" type="button">Download</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted-copy">No payments recorded.</p>'}`;
+      financialDialog.showModal();
+      financialDialog.querySelectorAll('.customer-statement').forEach((statementButton) => statementButton.addEventListener('click', async () => {
+        const timeParts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+          timeZone: sessionInfo.business.timezone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).formatToParts(new Date()).filter((part) => part.type !== 'literal')
+          .map((part) => [part.type, part.value]));
+        const endDate = `${timeParts.year}-${timeParts.month}-${timeParts.day}`;
+        const startDate = window.prompt('Statement start date (YYYY-MM-DD)', `${endDate.slice(0, 7)}-01`);
+        if (!startDate) return;
+        const params = new URLSearchParams({ startDate, endDate });
+        const format = statementButton.dataset.format;
+        try {
+          await downloadAuthenticatedFile(
+            `/api/customers/${button.dataset.id}/statement.${format}?${params}`,
+            `customer-${button.dataset.id}-statement.${format}`
+          );
+        } catch (error) {
+          alert(error.message);
+        }
+      }));
+      financialDialog.querySelectorAll('.customer-receipt').forEach((receiptButton) => receiptButton.addEventListener('click', () => {
+        downloadAuthenticatedFile(`/api/invoice-payments/${receiptButton.dataset.id}/receipt.pdf`, `receipt-${receiptButton.dataset.id}.pdf`)
+          .catch((error) => alert(error.message));
+      }));
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
   document.getElementById('customer-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const submit = event.currentTarget.querySelector('button[type="submit"]');

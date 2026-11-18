@@ -180,14 +180,12 @@ async function ensureMembership(businessId, userId, connection = db) {
 }
 
 async function ensureDefaultCategories(businessId) {
-  for (const name of DEFAULT_CATEGORIES) {
-    await execute(
-      `INSERT IGNORE INTO expense_categories
-       (business_id, name, is_system)
-       VALUES (?, ?, 1)`,
-      [businessId, name]
-    );
-  }
+  await execute(
+    `INSERT IGNORE INTO expense_categories
+     (business_id, name, is_system)
+     VALUES ${DEFAULT_CATEGORIES.map(() => '(?, ?, 1)').join(', ')}`,
+    DEFAULT_CATEGORIES.flatMap((name) => [businessId, name])
+  );
 }
 
 async function validateExpenseRelations(businessId, categoryId, supplierId, connection) {
@@ -520,6 +518,13 @@ async function updateExpense({ businessId, userId, expenseId, payload = {} }) {
   await withTransaction(async (connection) => {
     const expense = await getExpenseRow(businessId, expenseId, connection, true);
     if (!expense) throw new Error('EXPENSE_NOT_FOUND');
+    const linkedSupplierInvoice = await getOne(
+      `SELECT id FROM supplier_invoices
+       WHERE business_id = ? AND expense_id = ?`,
+      [businessId, expenseId],
+      connection
+    );
+    if (linkedSupplierInvoice) throw new Error('EXPENSE_LINKED_TO_SUPPLIER_INVOICE');
     if (expense.status === 'cancelled') throw new Error('EXPENSE_NOT_EDITABLE');
 
     const paymentCount = await getOne(
@@ -587,6 +592,12 @@ async function updateExpense({ businessId, userId, expenseId, payload = {} }) {
 
 async function cancelExpense({ businessId, userId, expenseId }) {
   await ensureMembership(businessId, userId);
+  const linkedSupplierInvoice = await getOne(
+    `SELECT id FROM supplier_invoices
+     WHERE business_id = ? AND expense_id = ?`,
+    [businessId, expenseId]
+  );
+  if (linkedSupplierInvoice) throw new Error('EXPENSE_LINKED_TO_SUPPLIER_INVOICE');
   const result = await execute(
     `UPDATE expenses e
      SET e.status = 'cancelled', e.updated_at = CURRENT_TIMESTAMP
@@ -595,6 +606,10 @@ async function cancelExpense({ businessId, userId, expenseId }) {
        AND NOT EXISTS (
          SELECT 1 FROM expense_payments p
          WHERE p.business_id = e.business_id AND p.expense_id = e.id
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM supplier_invoices si
+         WHERE si.business_id = e.business_id AND si.expense_id = e.id
        )`,
     [expenseId, businessId]
   );
@@ -605,6 +620,12 @@ async function cancelExpense({ businessId, userId, expenseId }) {
       [expenseId, businessId]
     );
     if (!expense) throw new Error('EXPENSE_NOT_FOUND');
+    const linkedSupplierInvoice = await getOne(
+      `SELECT id FROM supplier_invoices
+       WHERE business_id = ? AND expense_id = ?`,
+      [businessId, expenseId]
+    );
+    if (linkedSupplierInvoice) throw new Error('EXPENSE_LINKED_TO_SUPPLIER_INVOICE');
     throw new Error('EXPENSE_NOT_CANCELLABLE');
   }
 
@@ -671,6 +692,13 @@ async function recordExpensePayment({
 
       const expense = await getExpenseRow(businessId, expenseId, connection, true);
       if (!expense) throw new Error('EXPENSE_NOT_FOUND');
+      const linkedSupplierInvoice = await getOne(
+        `SELECT id FROM supplier_invoices
+         WHERE business_id = ? AND expense_id = ?`,
+        [businessId, expenseId],
+        connection
+      );
+      if (linkedSupplierInvoice) throw new Error('EXPENSE_LINKED_TO_SUPPLIER_INVOICE');
       if (['cancelled', 'draft'].includes(expense.status)) {
         throw new Error('EXPENSE_NOT_PAYABLE');
       }

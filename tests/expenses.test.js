@@ -77,6 +77,15 @@ test('expense management scopes records, tracks partial payments, and prevents d
 
   const categories = await (await api(baseUrl, owner.sessionToken, '/api/expenses/categories')).json();
   assert.ok(categories.categories.some((category) => category.name === 'Rent'));
+  const repeatedCategories = await Promise.all([
+    api(baseUrl, owner.sessionToken, '/api/expenses/categories'),
+    api(baseUrl, owner.sessionToken, '/api/expenses/categories'),
+  ]);
+  for (const response of repeatedCategories) {
+    assert.equal(response.status, 200);
+    const repeated = (await response.json()).categories;
+    assert.deepEqual(repeated.map((category) => category.id), categories.categories.map((category) => category.id));
+  }
 
   const categoryResponse = await api(baseUrl, owner.sessionToken, '/api/expenses/categories', {
     method: 'POST',
@@ -130,6 +139,10 @@ test('expense management scopes records, tracks partial payments, and prevents d
   assert.equal(expense.status, 'partially_paid');
   assert.equal(expense.paid_cents, 2000);
   assert.equal(expense.outstanding_cents, 3500);
+  const dashboardResponse = await api(baseUrl, owner.sessionToken, '/api/dashboard?period=today');
+  assert.equal(dashboardResponse.status, 200);
+  const dashboard = await dashboardResponse.json();
+  assert.equal(dashboard.summary.expenses.outstandingCents, 3500);
 
   const activity = await api(baseUrl, owner.sessionToken, '/api/reports/activity?period=today');
   assert.equal(activity.status, 200);

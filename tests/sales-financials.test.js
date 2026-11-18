@@ -117,6 +117,11 @@ test('sale discounts and tax flow through the dashboard without overstating reve
   assert.equal(dashboard.summary.today.grossProfitMarginPct, 52.94);
   assert.equal(dashboard.bestSellers[0].revenueCents, 1700);
   assert.equal(dashboard.bestSellers[0].grossProfitCents, 900);
+  assert.equal(dashboard.periodComparison.revenueCents, 1700);
+  assert.equal(dashboard.trends.reduce((sum, point) => sum + point.revenueCents, 0), 1700);
+  assert.equal(dashboard.summary.productCount, 1);
+  assert.equal(dashboard.insights.bestCategory.name, 'Test category');
+  assert.equal(dashboard.recentSales[0].total_cents, 1820);
 
   const profitCsvResponse = await request(baseUrl, registration.sessionToken, '/api/reports/profit-loss.csv?period=today');
   assert.equal(profitCsvResponse.status, 200);

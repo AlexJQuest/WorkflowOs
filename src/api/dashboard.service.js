@@ -15,9 +15,28 @@ async function queryMany(sql, params = []) {
   return rows;
 }
 
+async function runDashboardQueries(tasks) {
+  const results = new Array(tasks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < tasks.length) {
+      const index = next++;
+      results[index] = await tasks[index]();
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  return results;
+}
+
 function numeric(value) {
   const result = Number(value ?? 0);
   return Number.isFinite(result) ? result : 0;
+}
+
+function dateValue(value) {
+  return value instanceof Date
+    ? value.toISOString().slice(0, 10)
+    : String(value || '').slice(0, 10);
 }
 
 // Convert an ISO date string into a JavaScript Date.
@@ -395,24 +414,11 @@ async function getDashboardData(businessId, options = {}) {
   const previousDate = addDays(todayDate, -1);
   const previousBounds = dayBounds(previousDate, timeZone);
 
-  const [today, previousDay] = await Promise.all([
-    aggregateSales(
-      businessId,
-      todayBounds.start,
-      todayBounds.end
-    ),
-    aggregateSales(
-      businessId,
-      previousBounds.start,
-      previousBounds.end
-    ),
-  ]);
-
   // ------------------------------------------------
   // CUSTOMER STATISTICS
   // ------------------------------------------------
 
-  const customerStats = await queryOne(
+  const getCustomerStats = () => queryOne(
     `
     SELECT
       COUNT(*) AS total,
@@ -436,7 +442,7 @@ async function getDashboardData(businessId, options = {}) {
     ]
   );
 
-  const returningCustomerStats = await queryOne(
+  const getReturningCustomerStats = () => queryOne(
     `
     SELECT COUNT(DISTINCT current_sales.customer_id) AS total
     FROM sales current_sales
@@ -467,7 +473,7 @@ async function getDashboardData(businessId, options = {}) {
   // INVENTORY STATISTICS
   // ------------------------------------------------
 
-  const inventory = await queryOne(
+  const getInventoryStats = () => queryOne(
     `
     SELECT
       COUNT(
@@ -489,7 +495,7 @@ async function getDashboardData(businessId, options = {}) {
     [businessId]
   );
 
-  const lowStockProducts = await queryMany(
+  const getLowStockProducts = () => queryMany(
     `
     SELECT
       p.id AS product_id,
@@ -532,12 +538,6 @@ async function getDashboardData(businessId, options = {}) {
     timeZone
   );
 
-  const rangeSales = await getRangeSales(
-    businessId,
-    periodStart,
-    periodEnd
-  );
-
   const periodDays = Math.max(
     1,
     (
@@ -556,39 +556,13 @@ async function getDashboardData(businessId, options = {}) {
     timeZone
   );
 
-  const previousSales = await getRangeSales(
-    businessId,
-    previousStart,
-    periodStart
-  );
-
-  const periodRevenueCents = rangeSales.reduce(
-    (sum, sale) =>
-      sum + numeric(sale.subtotal_cents) - numeric(sale.discount_cents),
-    0
-  );
-
-  const previousPeriodRevenueCents = previousSales.reduce(
-    (sum, sale) =>
-      sum + numeric(sale.subtotal_cents) - numeric(sale.discount_cents),
-    0
-  );
-
   const granularity = options.granularity || 'daily';
-
-  const trends = getRevenueTrends(
-    rangeSales,
-    periodBounds.startDate,
-    periodBounds.endDate,
-    timeZone,
-    granularity
-  );
 
   // ------------------------------------------------
   // BEST SELLERS
   // ------------------------------------------------
 
-  const bestSellerRows = await queryMany(
+  const getBestSellerRows = () => queryMany(
     `
     SELECT
       p.id AS product_id,
@@ -628,21 +602,11 @@ async function getDashboardData(businessId, options = {}) {
     ]
   );
 
-  const bestSellers = bestSellerRows.map((row) => ({
-    productId: row.product_id,
-    name: row.name,
-    category: row.category,
-    quantitySold: numeric(row.quantity_sold),
-    revenueCents: numeric(row.revenue_cents),
-    grossProfitCents: numeric(row.gross_profit_cents),
-    grossProfitComplete: !numeric(row.unknown_cost_quantity),
-  }));
-
   // ------------------------------------------------
   // RECENT SALES
   // ------------------------------------------------
 
-  const recentSales = await queryMany(
+  const getRecentSales = () => queryMany(
     `
     SELECT
       s.id,
@@ -686,7 +650,7 @@ async function getDashboardData(businessId, options = {}) {
   // BEST CATEGORY
   // ------------------------------------------------
 
-  const category = await queryOne(
+  const getBestCategory = () => queryOne(
     `
     SELECT
       si.product_category_snapshot AS name,
@@ -714,7 +678,7 @@ async function getDashboardData(businessId, options = {}) {
   // PRODUCT COUNTS AND INSIGHTS
   // ------------------------------------------------
 
-  const productStats = await queryOne(
+  const getProductStats = () => queryOne(
     `
     SELECT COUNT(*) AS total
     FROM products
@@ -724,20 +688,8 @@ async function getDashboardData(businessId, options = {}) {
     [businessId]
   );
 
-  const totalProducts = numeric(productStats?.total);
-
-  const soldProducts = new Set(
-    bestSellers.map((item) => item.productId)
-  );
-
-  const bestProfit = [...bestSellers]
-    .filter((item) => item.grossProfitComplete)
-    .sort(
-      (a, b) => b.grossProfitCents - a.grossProfitCents
-    )[0] || null;
-
   const monthStartDate = `${todayDate.slice(0, 7)}-01`;
-  const expenseStats = await queryOne(
+  const getExpenseStats = () => queryOne(
     `SELECT
        COALESCE(SUM(CASE WHEN e.expense_date >= ? AND e.expense_date <= ?
          THEN e.total_cents ELSE 0 END), 0) AS month_to_date_cents,
@@ -753,6 +705,163 @@ async function getDashboardData(businessId, options = {}) {
      WHERE e.business_id = ? AND e.status NOT IN ('cancelled', 'draft')`,
     [monthStartDate, todayDate, todayDate, businessId]
   );
+
+  const [
+    today,
+    previousDay,
+    customerStats,
+    returningCustomerStats,
+    inventory,
+    lowStockProducts,
+    rangeSales,
+    previousSales,
+    bestSellerRows,
+    recentSales,
+    category,
+    productStats,
+    expenseStats,
+  ] = await runDashboardQueries([
+    () => aggregateSales(businessId, todayBounds.start, todayBounds.end),
+    () => aggregateSales(businessId, previousBounds.start, previousBounds.end),
+    getCustomerStats,
+    getReturningCustomerStats,
+    getInventoryStats,
+    getLowStockProducts,
+    () => getRangeSales(businessId, periodStart, periodEnd),
+    () => getRangeSales(businessId, previousStart, periodStart),
+    getBestSellerRows,
+    getRecentSales,
+    getBestCategory,
+    getProductStats,
+    getExpenseStats,
+  ]);
+
+  const periodRevenueCents = rangeSales.reduce(
+    (sum, sale) =>
+      sum + numeric(sale.subtotal_cents) - numeric(sale.discount_cents),
+    0
+  );
+  const previousPeriodRevenueCents = previousSales.reduce(
+    (sum, sale) =>
+      sum + numeric(sale.subtotal_cents) - numeric(sale.discount_cents),
+    0
+  );
+  const trends = getRevenueTrends(
+    rangeSales,
+    periodBounds.startDate,
+    periodBounds.endDate,
+    timeZone,
+    granularity
+  );
+  const bestSellers = bestSellerRows.map((row) => ({
+    productId: row.product_id,
+    name: row.name,
+    category: row.category,
+    quantitySold: numeric(row.quantity_sold),
+    revenueCents: numeric(row.revenue_cents),
+    grossProfitCents: numeric(row.gross_profit_cents),
+    grossProfitComplete: !numeric(row.unknown_cost_quantity),
+  }));
+  const totalProducts = numeric(productStats?.total);
+  const soldProducts = new Set(bestSellers.map((item) => item.productId));
+  const bestProfit = [...bestSellers]
+    .filter((item) => item.grossProfitComplete)
+    .sort((a, b) => b.grossProfitCents - a.grossProfitCents)[0] || null;
+
+  const nextWeekDate = addDays(todayDate, 7);
+  const [receivableStats, payableStats, paymentStats, overdueInvoices, dueSupplierInvoices, outstandingDeliveries] =
+    await Promise.all([
+      queryOne(
+        `SELECT
+           COALESCE(SUM(GREATEST(i.total_cents - COALESCE(p.paid_cents, 0)
+             - COALESCE(c.credited_cents, 0), 0)), 0) AS outstanding_cents,
+           COUNT(CASE WHEN i.due_date < ? AND i.total_cents >
+             COALESCE(p.paid_cents, 0) + COALESCE(c.credited_cents, 0) THEN 1 END) AS overdue_count,
+           COALESCE(SUM(CASE WHEN i.due_date < ?
+             THEN GREATEST(i.total_cents - COALESCE(p.paid_cents, 0)
+               - COALESCE(c.credited_cents, 0), 0) ELSE 0 END), 0) AS overdue_cents
+         FROM invoices i
+         LEFT JOIN (
+           SELECT business_id, invoice_id, SUM(amount_cents) AS paid_cents
+           FROM invoice_payments GROUP BY business_id, invoice_id
+         ) p ON p.business_id = i.business_id AND p.invoice_id = i.id
+         LEFT JOIN (
+           SELECT business_id, invoice_id, SUM(total_cents) AS credited_cents
+           FROM invoice_credit_notes GROUP BY business_id, invoice_id
+         ) c ON c.business_id = i.business_id AND c.invoice_id = i.id
+         WHERE i.business_id = ? AND i.status NOT IN ('draft', 'cancelled')`,
+        [todayDate, todayDate, businessId]
+      ),
+      queryOne(
+        `SELECT
+           COALESCE(SUM(GREATEST(si.total_cents - COALESCE(p.paid_cents, 0), 0)), 0) AS outstanding_cents,
+           COUNT(CASE WHEN si.due_date < ? AND si.total_cents > COALESCE(p.paid_cents, 0)
+             THEN 1 END) AS overdue_count,
+           COALESCE(SUM(CASE WHEN si.due_date < ?
+             THEN GREATEST(si.total_cents - COALESCE(p.paid_cents, 0), 0) ELSE 0 END), 0) AS overdue_cents
+         FROM supplier_invoices si
+         LEFT JOIN (
+           SELECT business_id, supplier_invoice_id, SUM(amount_cents) AS paid_cents
+           FROM supplier_invoice_payments GROUP BY business_id, supplier_invoice_id
+         ) p ON p.business_id = si.business_id AND p.supplier_invoice_id = si.id
+         WHERE si.business_id = ? AND si.status <> 'cancelled'`,
+        [todayDate, todayDate, businessId]
+      ),
+      queryOne(
+        `SELECT
+           COALESCE(SUM(CASE WHEN payment_date = ? THEN amount_cents ELSE 0 END), 0) AS customer_today_cents,
+           COALESCE(SUM(CASE WHEN payment_date >= ? AND payment_date <= ?
+               THEN amount_cents ELSE 0 END), 0) AS customer_month_cents,
+           (SELECT COALESCE(SUM(amount_cents), 0) FROM supplier_invoice_payments
+            WHERE business_id = ? AND payment_date >= ? AND payment_date <= ?) AS supplier_month_cents
+         FROM invoice_payments WHERE business_id = ?`,
+        [todayDate, monthStartDate, todayDate, businessId, monthStartDate, todayDate, businessId]
+      ),
+      queryMany(
+        `SELECT i.id, i.invoice_number, i.customer_name,
+           GREATEST(i.total_cents - COALESCE(p.paid_cents, 0)
+             - COALESCE(c.credited_cents, 0), 0) AS outstanding_cents
+         FROM invoices i
+         LEFT JOIN (
+           SELECT business_id, invoice_id, SUM(amount_cents) AS paid_cents
+           FROM invoice_payments GROUP BY business_id, invoice_id
+         ) p ON p.business_id = i.business_id AND p.invoice_id = i.id
+         LEFT JOIN (
+           SELECT business_id, invoice_id, SUM(total_cents) AS credited_cents
+           FROM invoice_credit_notes GROUP BY business_id, invoice_id
+         ) c ON c.business_id = i.business_id AND c.invoice_id = i.id
+         WHERE i.business_id = ? AND i.status NOT IN ('draft', 'cancelled')
+           AND i.due_date < ? AND i.total_cents > COALESCE(p.paid_cents, 0)
+             + COALESCE(c.credited_cents, 0)
+         ORDER BY i.due_date ASC, i.id ASC LIMIT 5`,
+        [businessId, todayDate]
+      ),
+      queryMany(
+        `SELECT si.id, si.supplier_invoice_number, si.supplier_name, si.due_date,
+           GREATEST(si.total_cents - COALESCE(p.paid_cents, 0), 0) AS outstanding_cents
+         FROM supplier_invoices si
+         LEFT JOIN (
+           SELECT business_id, supplier_invoice_id, SUM(amount_cents) AS paid_cents
+           FROM supplier_invoice_payments GROUP BY business_id, supplier_invoice_id
+         ) p ON p.business_id = si.business_id AND p.supplier_invoice_id = si.id
+         WHERE si.business_id = ? AND si.status <> 'cancelled'
+           AND si.due_date >= ? AND si.due_date <= ?
+           AND si.total_cents > COALESCE(p.paid_cents, 0)
+         ORDER BY si.due_date ASC LIMIT 5`,
+        [businessId, todayDate, nextWeekDate]
+      ),
+      queryMany(
+        `SELECT DISTINCT si.id, si.supplier_invoice_number, si.supplier_name
+         FROM supplier_invoices si
+         JOIN supplier_invoice_items item
+           ON item.supplier_invoice_id = si.id AND item.business_id = si.business_id
+         WHERE si.business_id = ? AND si.status <> 'cancelled'
+           AND item.product_id IS NOT NULL
+           AND item.received_quantity_millis < item.quantity_millis
+         ORDER BY si.id DESC LIMIT 5`,
+        [businessId]
+      ),
+    ]);
 
   // ------------------------------------------------
   // FINAL DASHBOARD RESPONSE
@@ -818,6 +927,48 @@ async function getDashboardData(businessId, options = {}) {
         monthToDateCents: numeric(expenseStats?.month_to_date_cents),
         outstandingCents: numeric(expenseStats?.outstanding_cents),
         overdueCount: numeric(expenseStats?.overdue_count),
+      },
+
+      financial: {
+        receivables: {
+          outstandingCents: numeric(receivableStats?.outstanding_cents),
+          overdueCents: numeric(receivableStats?.overdue_cents),
+          overdueCount: numeric(receivableStats?.overdue_count),
+          paymentsTodayCents: numeric(paymentStats?.customer_today_cents),
+          paymentsThisMonthCents: numeric(paymentStats?.customer_month_cents),
+        },
+        payables: {
+          outstandingCents: numeric(payableStats?.outstanding_cents),
+          overdueCents: numeric(payableStats?.overdue_cents),
+          overdueCount: numeric(payableStats?.overdue_count),
+          dueWithinWeek: dueSupplierInvoices.length,
+          paymentsThisMonthCents: numeric(paymentStats?.supplier_month_cents),
+        },
+        actionItems: [
+          ...overdueInvoices.map((invoice) => ({
+            type: 'customer_invoice_overdue',
+            recordId: invoice.id,
+            title: `${invoice.customer_name} invoice overdue`,
+            detail: invoice.invoice_number,
+            amountCents: numeric(invoice.outstanding_cents),
+            view: 'invoices',
+          })),
+          ...dueSupplierInvoices.map((invoice) => ({
+            type: 'supplier_invoice_due',
+            recordId: invoice.id,
+            title: `${invoice.supplier_name} invoice due this week`,
+            detail: `${invoice.supplier_invoice_number} · due ${dateValue(invoice.due_date)}`,
+            amountCents: numeric(invoice.outstanding_cents),
+            view: 'payables',
+          })),
+          ...outstandingDeliveries.map((invoice) => ({
+            type: 'supplier_delivery_outstanding',
+            recordId: invoice.id,
+            title: `${invoice.supplier_name} delivery outstanding`,
+            detail: invoice.supplier_invoice_number,
+            view: 'inventory',
+          })),
+        ],
       },
 
       productCount: totalProducts,

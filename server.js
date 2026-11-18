@@ -35,6 +35,18 @@ const {
 
 const { getDashboardData } = require('./src/api/dashboard.service');
 const expenseService = require('./src/api/expenses.service');
+const invoiceService = require('./src/api/invoices.service');
+const receivablesService = require('./src/api/accounts-receivable.service');
+const payablesService = require('./src/api/accounts-payable.service');
+const financialDocuments = require('./src/api/financial-documents.service');
+const invoiceEmailService = require('./src/api/invoice-email.service');
+const extractionService = require('./src/api/document-extraction.service');
+const { makeInvoicePdf } = require('./src/api/invoice-pdf.service');
+const {
+  makeCreditNotePdf,
+  makeReceiptPdf,
+  makeStatementPdf,
+} = require('./src/api/financial-pdf.service');
 const reportsService = require('./src/api/reports.service');
 
 const {
@@ -93,10 +105,112 @@ function handleExpenseError(error, res) {
     EXPENSE_NOT_FOUND: [404, 'Expense not found'],
     EXPENSE_NOT_EDITABLE: [409, 'This expense cannot be edited'],
     EXPENSE_NOT_CANCELLABLE: [409, 'Only unpaid expenses can be cancelled'],
+    EXPENSE_LINKED_TO_SUPPLIER_INVOICE: [409, 'Manage this expense through its linked supplier invoice'],
     IDEMPOTENCY_CONFLICT: [409, 'The payment key was already used for a different payment'],
     EXPENSE_NOT_PAYABLE: [409, 'This expense cannot accept payments'],
     PAYMENT_EXCEEDS_BALANCE: [409, 'Payment exceeds the outstanding balance'],
     RECURRING_EXPENSE_NOT_FOUND: [404, 'Recurring expense not found'],
+  };
+  const response = responses[error.message];
+  return response
+    ? res.status(response[0]).json({ error: response[1] })
+    : null;
+}
+
+function handleInvoiceError(error, res) {
+  if (error.message.startsWith('EMAIL_PROVIDER_REJECTED:')) {
+    return res.status(502).json({ error: 'The email provider did not accept the message' });
+  }
+  const responses = {
+    FORBIDDEN: [403, 'Forbidden'],
+    INVALID_BUSINESS: [404, 'Business not found'],
+    INVALID_CUSTOMER: [400, 'Select a customer from this business'],
+    INVALID_PRODUCT: [400, 'Select an active product from this business'],
+    INVALID_INVOICE: [400, 'Invoice details are invalid'],
+    INVALID_INVOICE_SETTINGS: [400, 'Invoice numbering settings are invalid'],
+    BUSINESS_LOGO_NOT_FOUND: [409, 'The configured business logo is no longer available'],
+    INVALID_CREDIT_NOTE: [400, 'Credit note details are invalid'],
+    INVALID_CREDIT_ITEM: [400, 'Select an item from the original invoice'],
+    INVOICE_NOT_CREDITABLE: [409, 'This invoice cannot be credited'],
+    NO_CREDITABLE_BALANCE: [409, 'The invoice has no remaining creditable balance'],
+    CREDIT_EXCEEDS_ITEM: [409, 'Credit quantity exceeds the remaining invoice item quantity'],
+    CREDIT_EXCEEDS_BALANCE: [409, 'Credit exceeds the remaining receivable balance'],
+    SEQUENCE_EXHAUSTED: [409, 'Financial document numbering sequence is exhausted'],
+    INVALID_CUSTOMER_EMAIL: [400, 'A valid customer email address is required'],
+    INVOICE_NOT_SENDABLE: [409, 'Only issued invoices can be emailed'],
+    EMAIL_NOT_CONFIGURED: [503, 'Email delivery is not configured. Set RESEND_API_KEY and EMAIL_FROM.'],
+    EMAIL_PROVIDER_REJECTED: [502, 'The email provider did not accept the message'],
+    EMAIL_DELIVERY_FAILED: [502, 'The email provider could not accept the message'],
+    EMAIL_RETRY_LIMIT: [429, 'Email retry limit reached for this invoice and recipient'],
+    RECEIPT_NOT_FOUND: [404, 'Payment receipt not found'],
+    INVALID_STATEMENT_RANGE: [400, 'Statement date range is invalid'],
+    INVALID_INVOICE_FILTER: [400, 'Invoice filters are invalid'],
+    INVALID_PAYMENT: [400, 'Payment details are invalid'],
+    INVOICE_NOT_FOUND: [404, 'Invoice not found'],
+    INVOICE_NOT_EDITABLE: [409, 'Only draft invoices can be edited'],
+    INVOICE_NOT_ISSUABLE: [409, 'Only draft invoices can be issued'],
+    INVOICE_NOT_CANCELLABLE: [409, 'This invoice cannot be cancelled'],
+    INVOICE_NOT_PAYABLE: [409, 'This invoice cannot accept payments'],
+    PAYMENT_EXCEEDS_BALANCE: [409, 'Payment exceeds the outstanding balance'],
+    IDEMPOTENCY_CONFLICT: [409, 'The payment key was already used for a different payment'],
+    INVOICE_SEQUENCE_EXHAUSTED: [409, 'Invoice numbering sequence is exhausted'],
+  };
+  const response = responses[error.message];
+  return response
+    ? res.status(response[0]).json({ error: response[1] })
+    : null;
+}
+
+function handlePayablesError(error, res) {
+  const responses = {
+    FORBIDDEN: [403, 'Forbidden'],
+    INVALID_SUPPLIER: [400, 'Select an active supplier from this business'],
+    INVALID_PRODUCT: [400, 'Select an active product from this business'],
+    INVALID_SUPPLIER_INVOICE: [400, 'Supplier invoice details are invalid'],
+    INVALID_SUPPLIER_INVOICE_FILTER: [400, 'Supplier invoice filters are invalid'],
+    SUPPLIER_INVOICE_DUPLICATE: [409, 'This supplier invoice number already exists for the supplier'],
+    MATCHING_EXPENSE_EXISTS: [409, 'An expense already uses this supplier invoice reference; link the existing expense'],
+    INVALID_SUPPLIER_PAYMENT: [400, 'Supplier payment details are invalid'],
+    SUPPLIER_INVOICE_NOT_FOUND: [404, 'Supplier invoice not found'],
+    SUPPLIER_INVOICE_ALREADY_LINKED: [409, 'This supplier invoice is already linked to an expense'],
+    SUPPLIER_INVOICE_ALREADY_PAID: [409, 'Linking must happen before supplier payments are recorded'],
+    SUPPLIER_INVOICE_NOT_PAYABLE: [409, 'This supplier invoice cannot accept payments'],
+    EXPENSE_NOT_FOUND: [404, 'Expense not found'],
+    INVALID_EXPENSE: [400, 'Expense details are invalid'],
+    EXPENSE_LINK_MISMATCH: [409, 'The expense must match the supplier, invoice total and have no existing payments'],
+    PAYMENT_EXCEEDS_BALANCE: [409, 'Payment exceeds the outstanding balance'],
+    IDEMPOTENCY_CONFLICT: [409, 'The idempotency key was already used for a different operation'],
+    INVALID_STOCK_RECEIPT: [400, 'Stock receipt details are invalid'],
+    INVALID_STOCK_RECEIPT_ITEM: [400, 'Only invoice product lines linked to business products can be received into stock'],
+    RECEIPT_EXCEEDS_ORDERED: [409, 'Received quantity exceeds the remaining quantity on the supplier invoice'],
+    INVALID_STATEMENT_RANGE: [400, 'Statement date range is invalid'],
+  };
+  const response = responses[error.message];
+  return response
+    ? res.status(response[0]).json({ error: response[1] })
+    : null;
+}
+
+function handleDocumentError(error, res) {
+  const responses = {
+    FORBIDDEN: [403, 'Forbidden'],
+    INVALID_DOCUMENT: [400, 'File is invalid or does not match an allowed file type'],
+    INVALID_DOCUMENT_FILTER: [400, 'Document search filters are invalid'],
+    DOCUMENT_RECORD_NOT_FOUND: [404, 'Related financial record not found'],
+    DOCUMENT_RECORD_MISMATCH: [400, 'Document links must refer to the same supplier invoice and expense'],
+    DOCUMENT_ALREADY_LINKED: [409, 'This file is already attached to another financial record'],
+    DOCUMENT_NOT_FOUND: [404, 'Document not found'],
+    PRIVATE_STORAGE_CONFIGURATION_INVALID: [500, 'Private document storage is not configured safely'],
+    DOCUMENT_STORAGE_INTEGRITY_ERROR: [500, 'Stored document integrity check failed'],
+    EXTRACTION_NOT_CONFIGURED: [503, 'Document extraction is not configured'],
+    EXTRACTION_CONFIGURATION_INCOMPLETE: [503, 'Document extraction configuration is incomplete'],
+    EXTRACTION_CONFIGURATION_INVALID: [503, 'Document extraction requires a valid HTTPS provider URL'],
+    EXTRACTION_CONSENT_REQUIRED: [400, 'Explicit consent is required before external document processing'],
+    DOCUMENT_NOT_EXTRACTABLE: [400, 'This document type cannot be sent for extraction'],
+    EXTRACTION_PROVIDER_FAILED: [502, 'The document extraction provider did not complete the request'],
+    EXTRACTION_RESPONSE_INVALID: [502, 'The extraction provider returned invalid suggestions'],
+    INVALID_EXTRACTION_CONFIRMATION: [400, 'Review confirmation must be true or false'],
+    EXTRACTION_SUGGESTION_NOT_FOUND: [404, 'Extraction suggestion not found'],
   };
   const response = responses[error.message];
   return response
@@ -546,6 +660,984 @@ app.get('/api/businesses/:businessId/settings',
 // Expenses
 // -----------------------------------------------------------------------------
 
+app.get('/api/invoices/settings', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        settings: await invoiceService.getInvoiceSettings(
+          Number(req.businessId),
+          req.user.id
+        ),
+      });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.put('/api/invoices/settings', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        settings: await invoiceService.updateInvoiceSettings({
+          businessId: Number(req.businessId),
+          userId: req.user.id,
+          numberPrefix: req.body?.numberPrefix,
+          payload: req.body || {},
+        }),
+      });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/invoices', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        ...await invoiceService.listInvoices({
+          businessId: Number(req.businessId),
+          userId: req.user.id,
+          filters: req.query,
+        }),
+      });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/invoices', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const invoice = await invoiceService.createDraft({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        payload: req.body || {},
+      });
+      return res.status(201).json({ invoice });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/invoices/:invoiceId(\\d+)', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const invoice = await invoiceService.getInvoice({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        invoiceId: Number(req.params.invoiceId),
+      });
+      if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+      return res.json({ invoice });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/invoices/:invoiceId(\\d+)/pdf',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const businessId = Number(req.businessId);
+      const invoice = await invoiceService.getInvoice({
+        businessId,
+        userId: req.user.id,
+        invoiceId: Number(req.params.invoiceId),
+      });
+      if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+      const business = await queryOne(
+        `SELECT b.name, b.currency, s.contact_email, s.phone, s.address
+         FROM businesses b
+         LEFT JOIN business_settings s ON s.business_id = b.id
+         WHERE b.id = ?`,
+        [businessId]
+      );
+      if (!business) return res.status(404).json({ error: 'Business not found' });
+      const settings = await invoiceService.getInvoiceSettings(businessId, req.user.id);
+      let logoBuffer = null;
+      if (settings.logoDocumentId) {
+        const logo = await financialDocuments.readDocument({
+          businessId,
+          userId: req.user.id,
+          documentId: settings.logoDocumentId,
+        });
+        if (!logo) throw new Error('BUSINESS_LOGO_NOT_FOUND');
+        logoBuffer = logo.buffer;
+      }
+      const pdf = await makeInvoicePdf({
+        invoice,
+        business: {
+          ...business,
+          payment_instructions: settings.paymentInstructions,
+          bank_account_name: settings.bankAccountName,
+          bank_name: settings.bankName,
+          bank_account_number: settings.bankAccountNumber,
+          bank_branch_code: settings.bankBranchCode,
+          bank_account_type: settings.bankAccountType,
+          logoBuffer,
+        },
+      });
+      const filename = encodeURIComponent(invoice.invoice_number || `draft-${invoice.id}`);
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename="invoice-${filename}.pdf"`,
+        'Content-Type': 'application/pdf',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.status(200).send(pdf);
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.put('/api/invoices/:invoiceId(\\d+)', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        invoice: await invoiceService.updateDraft({
+          businessId: Number(req.businessId),
+          userId: req.user.id,
+          invoiceId: Number(req.params.invoiceId),
+          payload: req.body || {},
+        }),
+      });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/invoices/:invoiceId(\\d+)/issue', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        invoice: await invoiceService.issueInvoice({
+          businessId: Number(req.businessId),
+          userId: req.user.id,
+          invoiceId: Number(req.params.invoiceId),
+        }),
+      });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/invoices/:invoiceId(\\d+)/cancel', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        invoice: await invoiceService.cancelInvoice({
+          businessId: Number(req.businessId),
+          userId: req.user.id,
+          invoiceId: Number(req.params.invoiceId),
+        }),
+      });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/invoices/:invoiceId(\\d+)/payments',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const invoice = await invoiceService.getInvoice({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        invoiceId: Number(req.params.invoiceId),
+      });
+      if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+      return res.json({ payments: invoice.payments });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/invoices/:invoiceId(\\d+)/payments',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await invoiceService.recordPayment({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        invoiceId: Number(req.params.invoiceId),
+        payload: req.body || {},
+        idempotencyKey: req.get('Idempotency-Key'),
+      });
+      return res.status(result.replayed ? 200 : 201).json(result);
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/invoices/:invoiceId(\\d+)/email',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await invoiceEmailService.sendInvoiceEmail({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        invoiceId: Number(req.params.invoiceId),
+      });
+      return res.json({ email: result });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/invoices/:invoiceId(\\d+)/email-logs',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        emailLogs: await invoiceEmailService.listInvoiceEmailLogs({
+          businessId: Number(req.businessId),
+          userId: req.user.id,
+          invoiceId: Number(req.params.invoiceId),
+        }),
+      });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/invoices/:invoiceId(\\d+)/credit-notes',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const creditNote = await receivablesService.createCreditNote({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        invoiceId: Number(req.params.invoiceId),
+        payload: req.body || {},
+      });
+      return res.status(201).json({ creditNote });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/credit-notes/:creditNoteId(\\d+)',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const creditNote = await receivablesService.getCreditNote({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        creditId: Number(req.params.creditNoteId),
+      });
+      if (!creditNote) return res.status(404).json({ error: 'Credit note not found' });
+      return res.json({ creditNote });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/credit-notes/:creditNoteId(\\d+)/pdf',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const creditNote = await receivablesService.getCreditNote({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        creditId: Number(req.params.creditNoteId),
+      });
+      if (!creditNote) return res.status(404).json({ error: 'Credit note not found' });
+      const pdf = await makeCreditNotePdf({ creditNote });
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(creditNote.credit_number)}.pdf"`,
+        'Content-Type': 'application/pdf',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.send(pdf);
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/invoice-payments/:paymentId(\\d+)/receipt.pdf',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const receipt = await receivablesService.getReceipt({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        paymentId: Number(req.params.paymentId),
+      });
+      if (!receipt) return res.status(404).json({ error: 'Payment receipt not found' });
+      const pdf = await makeReceiptPdf({ receipt });
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(receipt.receipt_number)}.pdf"`,
+        'Content-Type': 'application/pdf',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.send(pdf);
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/invoice-payments/:paymentId(\\d+)/receipt-email',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        email: await invoiceEmailService.sendReceiptEmail({
+          businessId: Number(req.businessId),
+          userId: req.user.id,
+          paymentId: Number(req.params.paymentId),
+        }),
+      });
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/customers/:customerId(\\d+)/financial',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const financials = await receivablesService.getCustomerFinancials({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        customerId: Number(req.params.customerId),
+      });
+      if (!financials) return res.status(404).json({ error: 'Customer not found' });
+      return res.json(financials);
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/customers/:customerId(\\d+)/statement.csv',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const statement = await receivablesService.getCustomerStatement({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        customerId: Number(req.params.customerId),
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+      });
+      if (!statement) return res.status(404).json({ error: 'Customer not found' });
+      const business = await queryOne('SELECT currency FROM businesses WHERE id = ?', [req.businessId]);
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename="customer-${statement.customer.id}-statement.csv"`,
+        'Content-Type': 'text/csv; charset=utf-8',
+      });
+      return res.send(`\uFEFF${receivablesService.customerStatementCsv(statement, business.currency)}`);
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/customers/:customerId(\\d+)/statement.pdf',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const statement = await receivablesService.getCustomerStatement({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        customerId: Number(req.params.customerId),
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+      });
+      if (!statement) return res.status(404).json({ error: 'Customer not found' });
+      const business = await queryOne(
+        `SELECT b.name, b.currency, s.contact_email, s.phone, s.address
+         FROM businesses b LEFT JOIN business_settings s ON s.business_id = b.id
+         WHERE b.id = ?`,
+        [req.businessId]
+      );
+      const pdf = await makeStatementPdf({ statement, business });
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename="customer-${statement.customer.id}-statement.pdf"`,
+        'Content-Type': 'application/pdf',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.send(pdf);
+    } catch (error) {
+      const response = handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/supplier-invoices/summary',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        summary: await payablesService.getPayablesSummary(
+          Number(req.businessId),
+          req.user.id
+        ),
+      });
+    } catch (error) {
+      const response = handlePayablesError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/supplier-invoices',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await payablesService.listSupplierInvoices({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        filters: req.query,
+      }));
+    } catch (error) {
+      const response = handlePayablesError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/supplier-invoices',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const supplierInvoice = await payablesService.createSupplierInvoice({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        payload: req.body || {},
+      });
+      return res.status(201).json({ supplierInvoice });
+    } catch (error) {
+      const response = handlePayablesError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/supplier-invoices/:supplierInvoiceId(\\d+)',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const supplierInvoice = await payablesService.getSupplierInvoice({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        supplierInvoiceId: Number(req.params.supplierInvoiceId),
+      });
+      if (!supplierInvoice) return res.status(404).json({ error: 'Supplier invoice not found' });
+      return res.json({ supplierInvoice });
+    } catch (error) {
+      const response = handlePayablesError(error, res) || handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/supplier-invoices/:supplierInvoiceId(\\d+)/expense',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await payablesService.linkSupplierInvoiceExpense({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        supplierInvoiceId: Number(req.params.supplierInvoiceId),
+        payload: req.body || {},
+      });
+      return res.json(result);
+    } catch (error) {
+      const response = handlePayablesError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/supplier-invoices/:supplierInvoiceId(\\d+)/payments',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await payablesService.recordSupplierPayment({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        supplierInvoiceId: Number(req.params.supplierInvoiceId),
+        payload: req.body || {},
+        idempotencyKey: req.get('Idempotency-Key'),
+      });
+      return res.status(result.replayed ? 200 : 201).json(result);
+    } catch (error) {
+      const response = handlePayablesError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/supplier-invoices/:supplierInvoiceId(\\d+)/stock-receipts',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await payablesService.receiveSupplierStock({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        supplierInvoiceId: Number(req.params.supplierInvoiceId),
+        payload: req.body || {},
+        idempotencyKey: req.get('Idempotency-Key'),
+      });
+      return res.status(result.replayed ? 200 : 201).json(result);
+    } catch (error) {
+      const response = handlePayablesError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/suppliers/:supplierId(\\d+)/statement.csv',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const statement = await payablesService.getSupplierStatement({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        supplierId: Number(req.params.supplierId),
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+      });
+      if (!statement) return res.status(404).json({ error: 'Supplier not found' });
+      const business = await queryOne('SELECT currency FROM businesses WHERE id = ?', [req.businessId]);
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename="supplier-${statement.supplier.id}-statement.csv"`,
+        'Content-Type': 'text/csv; charset=utf-8',
+      });
+      return res.send(`\uFEFF${payablesService.supplierStatementCsv(statement, business.currency)}`);
+    } catch (error) {
+      const response = handlePayablesError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/suppliers/:supplierId(\\d+)/statement.pdf',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const statement = await payablesService.getSupplierStatement({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        supplierId: Number(req.params.supplierId),
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+      });
+      if (!statement) return res.status(404).json({ error: 'Supplier not found' });
+      const business = await queryOne(
+        `SELECT b.name, b.currency, s.contact_email, s.phone, s.address
+         FROM businesses b LEFT JOIN business_settings s ON s.business_id = b.id
+         WHERE b.id = ?`,
+        [req.businessId]
+      );
+      const pdf = await makeStatementPdf({
+        statement,
+        business,
+        accountLabel: 'SUPPLIER STATEMENT',
+        counterparty: statement.supplier,
+      });
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename="supplier-${statement.supplier.id}-statement.pdf"`,
+        'Content-Type': 'application/pdf',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.send(pdf);
+    } catch (error) {
+      const response = handlePayablesError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/financial-summary',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const businessId = Number(req.businessId);
+      const [receivables, payables] = await Promise.all([
+        receivablesService.getReceivablesSummary(businessId, req.user.id),
+        payablesService.getPayablesSummary(businessId, req.user.id),
+      ]);
+      return res.json({ receivables, payables });
+    } catch (error) {
+      const response = handlePayablesError(error, res) || handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+const financialDocumentBody = express.raw({
+  type: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+  limit: '10mb',
+});
+
+function getUploadFilename(req) {
+  try {
+    return decodeURIComponent(req.get('X-File-Name') || 'document');
+  } catch {
+    throw new Error('INVALID_DOCUMENT');
+  }
+}
+
+app.get('/api/documents',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const documents = await financialDocuments.listDocuments({
+        businessId: Number(req.businessId),
+        supplierInvoiceId: req.query.supplierInvoiceId ? Number(req.query.supplierInvoiceId) : undefined,
+        expenseId: req.query.expenseId ? Number(req.query.expenseId) : undefined,
+        invoiceId: req.query.invoiceId ? Number(req.query.invoiceId) : undefined,
+        documentType: req.query.documentType,
+        search: req.query.search,
+        startDate: req.query.startDate,
+        endDate: req.query.endDate,
+      });
+      return res.json({ documents });
+    } catch (error) {
+      const response = handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/invoices/:invoiceId(\\d+)/documents',
+  requireAuth,
+  requireBusinessAccess,
+  financialDocumentBody,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await financialDocuments.uploadDocument({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        invoiceId: Number(req.params.invoiceId),
+        documentType: 'supporting_document',
+        originalFilename: getUploadFilename(req),
+        mimeType: String(req.get('Content-Type') || '').split(';')[0].trim().toLowerCase(),
+        buffer: req.body,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({ document: result });
+    } catch (error) {
+      const response = handleDocumentError(error, res) || handleInvoiceError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/supplier-invoices/:supplierInvoiceId(\\d+)/documents',
+  requireAuth,
+  requireBusinessAccess,
+  financialDocumentBody,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await financialDocuments.uploadDocument({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        supplierInvoiceId: Number(req.params.supplierInvoiceId),
+        expenseId: req.query.expenseId ? Number(req.query.expenseId) : null,
+        documentType: 'supplier_invoice',
+        originalFilename: getUploadFilename(req),
+        mimeType: String(req.get('Content-Type') || '').split(';')[0].trim().toLowerCase(),
+        buffer: req.body,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({ document: result });
+    } catch (error) {
+      const response = handleDocumentError(error, res) || handlePayablesError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/expenses/:expenseId(\\d+)/documents',
+  requireAuth,
+  requireBusinessAccess,
+  financialDocumentBody,
+  asyncHandler(async (req, res) => {
+    try {
+      const linkedInvoice = await queryOne(
+        `SELECT id FROM supplier_invoices
+         WHERE business_id = ? AND expense_id = ?`,
+        [req.businessId, req.params.expenseId]
+      );
+      const result = await financialDocuments.uploadDocument({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        supplierInvoiceId: linkedInvoice?.id || null,
+        expenseId: Number(req.params.expenseId),
+        documentType: 'expense_receipt',
+        originalFilename: getUploadFilename(req),
+        mimeType: String(req.get('Content-Type') || '').split(';')[0].trim().toLowerCase(),
+        buffer: req.body,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({ document: result });
+    } catch (error) {
+      const response = handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/business/invoice-logo',
+  requireAuth,
+  requireBusinessAccess,
+  financialDocumentBody,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await financialDocuments.uploadDocument({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        documentType: 'business_logo',
+        originalFilename: getUploadFilename(req),
+        mimeType: String(req.get('Content-Type') || '').split(';')[0].trim().toLowerCase(),
+        buffer: req.body,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({ document: result });
+    } catch (error) {
+      const response = handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/documents/:documentId(\\d+)/preview',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await financialDocuments.readDocument({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        documentId: Number(req.params.documentId),
+      });
+      if (!result) return res.status(404).json({ error: 'Document not found' });
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(result.document.original_filename)}`,
+        'Content-Type': result.document.mime_type,
+        'Content-Security-Policy': "sandbox; default-src 'none';",
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'SAMEORIGIN',
+      });
+      return res.send(result.buffer);
+    } catch (error) {
+      const response = handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/documents/:documentId(\\d+)',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await financialDocuments.readDocument({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        documentId: Number(req.params.documentId),
+      });
+      if (!result) return res.status(404).json({ error: 'Document not found' });
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(result.document.original_filename)}`,
+        'Content-Type': 'application/octet-stream',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.send(result.buffer);
+    } catch (error) {
+      const response = handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.delete('/api/documents/:documentId(\\d+)',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await financialDocuments.removeDocument({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        documentId: Number(req.params.documentId),
+      }));
+    } catch (error) {
+      const response = handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/documents/extraction-status',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        extraction: extractionService.getProviderStatus(),
+        requiresExplicitConsent: true,
+        requiresHumanReview: true,
+      });
+    } catch (error) {
+      const response = handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/documents/:documentId(\\d+)/extract',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        extraction: await extractionService.extractSuggestions({
+          businessId: Number(req.businessId),
+          userId: req.user.id,
+          documentId: Number(req.params.documentId),
+          consentToExternalProcessing: req.body?.consentToExternalProcessing,
+        }),
+      });
+    } catch (error) {
+      const response = handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/documents/:documentId(\\d+)/extractions/:suggestionId(\\d+)/confirm',
+  requireAuth,
+  requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json({
+        extraction: await extractionService.confirmSuggestions({
+          businessId: Number(req.businessId),
+          userId: req.user.id,
+          documentId: Number(req.params.documentId),
+          suggestionId: Number(req.params.suggestionId),
+          confirmed: req.body?.confirmed,
+        }),
+      });
+    } catch (error) {
+      const response = handleDocumentError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
 app.get('/api/expenses/categories', requireAuth, requireBusinessAccess,
   asyncHandler(async (req, res) => {
     return res.json({
@@ -811,6 +1903,9 @@ function getReportFilters(query) {
     period: query.period,
     startDate: query.startDate,
     endDate: query.endDate,
+    customerId: query.customerId,
+    supplierId: query.supplierId,
+    status: query.status,
   };
 }
 
@@ -820,6 +1915,10 @@ function handleReportError(error, res) {
   }
   if (error.message === 'INVALID_REPORT_TYPE') {
     return res.status(400).json({ error: 'Invalid report type' });
+  }
+  if (error.message.startsWith('INVALID_RECEIVABLE') ||
+      error.message.startsWith('INVALID_PAYABLE')) {
+    return res.status(400).json({ error: 'Invalid financial report filter' });
   }
   if (error.message === 'INVALID_BUSINESS') {
     return res.status(404).json({ error: 'Business not found' });
@@ -902,6 +2001,36 @@ app.get('/api/reports/customers', requireAuth, requireBusinessAccess,
   })
 );
 
+app.get('/api/reports/receivables', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await reportsService.getReceivablesReport(
+        Number(req.businessId),
+        getReportFilters(req.query)
+      ));
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/reports/payables', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await reportsService.getPayablesReport(
+        Number(req.businessId),
+        getReportFilters(req.query)
+      ));
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
 app.get('/api/reports/activity', requireAuth, requireBusinessAccess,
   asyncHandler(async (req, res) => {
     try {
@@ -917,7 +2046,7 @@ app.get('/api/reports/activity', requireAuth, requireBusinessAccess,
   })
 );
 
-app.get('/api/reports/:type(sales|expenses|inventory|customers|profit-loss|activity).csv',
+app.get('/api/reports/:type(sales|expenses|inventory|customers|profit-loss|activity|receivables|payables).csv',
   requireAuth,
   requireBusinessAccess,
   asyncHandler(async (req, res) => {
@@ -1664,6 +2793,13 @@ app.use((error, req, res, next) => {
 
   if (res.headersSent) {
     return next(error);
+  }
+
+  if (error.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Uploaded document exceeds the 10 MB limit' });
+  }
+  if (error.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Request body is invalid' });
   }
 
   return res.status(500).json({

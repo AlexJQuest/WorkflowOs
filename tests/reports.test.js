@@ -52,13 +52,23 @@ test('reports provide tenant-scoped summaries, validated ranges, and CSV downloa
   userId = session.user.id;
 
   const query = '?period=custom&startDate=2025-01-01&endDate=2025-01-31';
-  const [overviewResponse, salesResponse, expensesResponse, inventoryResponse, customersResponse] =
+  const [
+    overviewResponse,
+    salesResponse,
+    expensesResponse,
+    inventoryResponse,
+    customersResponse,
+    receivablesResponse,
+    payablesResponse,
+  ] =
     await Promise.all([
       request(baseUrl, auth.sessionToken, `/api/reports/overview${query}`),
       request(baseUrl, auth.sessionToken, `/api/reports/sales${query}`),
       request(baseUrl, auth.sessionToken, `/api/reports/expenses${query}`),
       request(baseUrl, auth.sessionToken, `/api/reports/inventory${query}`),
       request(baseUrl, auth.sessionToken, `/api/reports/customers${query}`),
+      request(baseUrl, auth.sessionToken, `/api/reports/receivables${query}`),
+      request(baseUrl, auth.sessionToken, `/api/reports/payables${query}`),
     ]);
 
   for (const response of [
@@ -67,6 +77,8 @@ test('reports provide tenant-scoped summaries, validated ranges, and CSV downloa
     expensesResponse,
     inventoryResponse,
     customersResponse,
+    receivablesResponse,
+    payablesResponse,
   ]) {
     assert.equal(response.status, 200);
   }
@@ -79,12 +91,16 @@ test('reports provide tenant-scoped summaries, validated ranges, and CSV downloa
   assert.equal((await expensesResponse.json()).categories.length, 0);
   assert.equal((await inventoryResponse.json()).products.length, 0);
   assert.equal((await customersResponse.json()).customers.length, 0);
+  assert.equal((await receivablesResponse.json()).invoices.length, 0);
+  assert.equal((await payablesResponse.json()).invoices.length, 0);
 
   const dashboardResponse = await request(baseUrl, auth.sessionToken, '/api/dashboard');
   assert.equal(dashboardResponse.status, 200);
   const dashboard = await dashboardResponse.json();
   assert.equal(dashboard.summary.expenses.monthToDateCents, 0);
   assert.equal(dashboard.summary.expenses.outstandingCents, 0);
+  assert.equal(dashboard.summary.financial.receivables.outstandingCents, 0);
+  assert.equal(dashboard.summary.financial.payables.outstandingCents, 0);
 
   const invalidRange = await request(
     baseUrl,

@@ -580,6 +580,257 @@ async function getActivityReport(businessId, filters = {}) {
   };
 }
 
+function finiteNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function dateOnly(value) {
+  return value instanceof Date
+    ? value.toISOString().slice(0, 10)
+    : String(value || '').slice(0, 10);
+}
+
+function assertEntityFilter(value, label) {
+  if (value === undefined || value === null || value === '') return null;
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error(`INVALID_${label}_FILTER`);
+  return id;
+}
+
+async function getReceivablesReport(businessId, filters = {}) {
+  const context = await getContext(businessId, filters);
+  const customerId = assertEntityFilter(filters.customerId, 'RECEIVABLE');
+  const status = filters.status ? String(filters.status) : null;
+  if (status && !['outstanding', 'overdue', 'partially_paid', 'paid'].includes(status)) {
+    throw new Error('INVALID_RECEIVABLE_FILTER');
+  }
+  const conditions = [
+    "i.status NOT IN ('draft', 'cancelled')",
+    'i.invoice_date <= ?',
+  ];
+  const params = [context.endDate];
+  if (customerId) {
+    conditions.push('i.customer_id = ?');
+    params.push(customerId);
+  }
+  if (status === 'outstanding') conditions.push('balance.outstanding_cents > 0');
+  if (status === 'overdue') conditions.push('balance.outstanding_cents > 0 AND i.due_date < ?');
+  if (status === 'partially_paid') conditions.push('balance.paid_cents > 0 AND balance.outstanding_cents > 0');
+  if (status === 'paid') conditions.push('balance.outstanding_cents = 0');
+  if (status === 'overdue') params.push(context.endDate);
+  const where = conditions.join(' AND ');
+
+  const rows = await getMany(
+    `SELECT i.id, i.invoice_number, i.customer_id, i.customer_name,
+       i.invoice_date, i.due_date, i.total_cents, i.currency,
+       balance.paid_cents, balance.credited_cents, balance.outstanding_cents,
+       GREATEST(DATEDIFF(?, i.due_date), 0) AS days_overdue
+     FROM invoices i
+     JOIN (
+       SELECT source.id AS invoice_id, source.business_id,
+         COALESCE(pay.paid_cents, 0) AS paid_cents,
+         COALESCE(credits.credited_cents, 0) AS credited_cents,
+         GREATEST(source.total_cents - COALESCE(pay.paid_cents, 0)
+           - COALESCE(credits.credited_cents, 0), 0) AS outstanding_cents
+       FROM invoices source
+       LEFT JOIN (
+         SELECT invoice_id, business_id, SUM(amount_cents) AS paid_cents
+         FROM invoice_payments WHERE payment_date <= ?
+         GROUP BY business_id, invoice_id
+       ) pay ON pay.business_id = source.business_id AND pay.invoice_id = source.id
+       LEFT JOIN (
+         SELECT invoice_id, business_id, SUM(total_cents) AS credited_cents
+         FROM invoice_credit_notes WHERE credit_date <= ?
+         GROUP BY business_id, invoice_id
+       ) credits ON credits.business_id = source.business_id AND credits.invoice_id = source.id
+       WHERE source.business_id = ?
+     ) balance ON balance.invoice_id = i.id AND balance.business_id = i.business_id
+     WHERE i.business_id = ? AND ${where}
+     ORDER BY days_overdue DESC, i.due_date ASC, i.id DESC LIMIT 1001`,
+    [
+      context.endDate,
+      context.endDate,
+      context.endDate,
+      businessId,
+      businessId,
+      ...params,
+    ]
+  );
+  const truncated = rows.length > 1000;
+  if (truncated) rows.length = 1000;
+  const aging = { currentCents: 0, days1To30Cents: 0, days31To60Cents: 0, days61To90Cents: 0, over90DaysCents: 0 };
+  const customers = new Map();
+  for (const invoice of rows) {
+    invoice.invoice_date = dateOnly(invoice.invoice_date);
+    invoice.due_date = dateOnly(invoice.due_date);
+    invoice.total_cents = finiteNumber(invoice.total_cents);
+    invoice.paid_cents = finiteNumber(invoice.paid_cents);
+    invoice.credited_cents = finiteNumber(invoice.credited_cents);
+    invoice.outstanding_cents = finiteNumber(invoice.outstanding_cents);
+    invoice.days_overdue = Number(invoice.days_overdue);
+    if (invoice.due_date >= context.endDate) aging.currentCents += invoice.outstanding_cents;
+    else if (invoice.days_overdue <= 30) aging.days1To30Cents += invoice.outstanding_cents;
+    else if (invoice.days_overdue <= 60) aging.days31To60Cents += invoice.outstanding_cents;
+    else if (invoice.days_overdue <= 90) aging.days61To90Cents += invoice.outstanding_cents;
+    else aging.over90DaysCents += invoice.outstanding_cents;
+    const customer = customers.get(invoice.customer_id) || {
+      id: invoice.customer_id,
+      name: invoice.customer_name,
+      outstandingCents: 0,
+      overdueCents: 0,
+      invoiceCount: 0,
+    };
+    customer.outstandingCents += invoice.outstanding_cents;
+    if (invoice.days_overdue > 0) customer.overdueCents += invoice.outstanding_cents;
+    if (invoice.outstanding_cents > 0) customer.invoiceCount += 1;
+    customers.set(invoice.customer_id, customer);
+  }
+  const customerFilter = customerId ? ' AND customer_id = ?' : '';
+  const customerParams = customerId ? [customerId] : [];
+  const [issued, payments] = await Promise.all([
+    getOne(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(total_cents), 0) AS amount_cents
+       FROM invoices WHERE business_id = ? AND status NOT IN ('draft', 'cancelled')
+         AND invoice_date >= ? AND invoice_date <= ?${customerFilter}`,
+      [businessId, context.startDate, context.endDate, ...customerParams]
+    ),
+    getOne(
+      `SELECT COALESCE(SUM(p.amount_cents), 0) AS amount_cents,
+         AVG(DATEDIFF(p.payment_date, i.invoice_date)) AS average_days
+       FROM invoice_payments p
+       JOIN invoices i ON i.id = p.invoice_id AND i.business_id = p.business_id
+       WHERE p.business_id = ? AND p.payment_date >= ? AND p.payment_date <= ?${customerId ? ' AND i.customer_id = ?' : ''}`,
+      [businessId, context.startDate, context.endDate, ...customerParams]
+    ),
+  ]);
+  return {
+    range: { startDate: context.startDate, endDate: context.endDate, asOfDate: context.endDate },
+    currency: context.business.currency,
+    summary: {
+      outstandingCents: rows.reduce((sum, invoice) => sum + invoice.outstanding_cents, 0),
+      overdueCents: aging.days1To30Cents + aging.days31To60Cents + aging.days61To90Cents + aging.over90DaysCents,
+      overdueCount: rows.filter((invoice) => invoice.outstanding_cents > 0 && invoice.days_overdue > 0).length,
+      partiallyPaidCount: rows.filter((invoice) => invoice.outstanding_cents > 0 && invoice.paid_cents > 0).length,
+      invoicesIssuedCount: finiteNumber(issued.count),
+      invoicesIssuedCents: finiteNumber(issued.amount_cents),
+      paymentsReceivedCents: finiteNumber(payments.amount_cents),
+      averagePaymentDays: payments.average_days === null ? null : Math.max(0, Math.round(Number(payments.average_days) * 100) / 100),
+    },
+    aging,
+    truncated,
+    customers: [...customers.values()].sort((a, b) => b.overdueCents - a.overdueCents).slice(0, 500),
+    invoices: rows,
+  };
+}
+
+async function getPayablesReport(businessId, filters = {}) {
+  const context = await getContext(businessId, filters);
+  const supplierId = assertEntityFilter(filters.supplierId, 'PAYABLE');
+  const status = filters.status ? String(filters.status) : null;
+  if (status && !['outstanding', 'overdue', 'partially_paid', 'paid'].includes(status)) {
+    throw new Error('INVALID_PAYABLE_FILTER');
+  }
+  const conditions = ["si.status <> 'cancelled'", 'si.invoice_date <= ?'];
+  const params = [context.endDate];
+  if (supplierId) {
+    conditions.push('si.supplier_id = ?');
+    params.push(supplierId);
+  }
+  if (status === 'outstanding') conditions.push('balance.outstanding_cents > 0');
+  if (status === 'overdue') conditions.push('balance.outstanding_cents > 0 AND si.due_date < ?');
+  if (status === 'partially_paid') conditions.push('balance.paid_cents > 0 AND balance.outstanding_cents > 0');
+  if (status === 'paid') conditions.push('balance.outstanding_cents = 0');
+  if (status === 'overdue') params.push(context.endDate);
+  const rows = await getMany(
+    `SELECT si.id, si.supplier_id, si.supplier_name, si.supplier_invoice_number,
+       si.invoice_date, si.due_date, si.total_cents, si.currency,
+       balance.paid_cents, balance.outstanding_cents,
+       GREATEST(DATEDIFF(?, si.due_date), 0) AS days_overdue
+     FROM supplier_invoices si
+     JOIN (
+       SELECT source.id AS invoice_id, source.business_id,
+         COALESCE(pay.paid_cents, 0) AS paid_cents,
+         GREATEST(source.total_cents - COALESCE(pay.paid_cents, 0), 0) AS outstanding_cents
+       FROM supplier_invoices source
+       LEFT JOIN (
+         SELECT supplier_invoice_id, business_id, SUM(amount_cents) AS paid_cents
+         FROM supplier_invoice_payments WHERE payment_date <= ?
+         GROUP BY business_id, supplier_invoice_id
+       ) pay ON pay.business_id = source.business_id AND pay.supplier_invoice_id = source.id
+       WHERE source.business_id = ?
+     ) balance ON balance.invoice_id = si.id AND balance.business_id = si.business_id
+     WHERE si.business_id = ? AND ${conditions.join(' AND ')}
+     ORDER BY days_overdue DESC, si.due_date ASC, si.id DESC LIMIT 1001`,
+    [context.endDate, context.endDate, businessId, businessId, ...params]
+  );
+  const truncated = rows.length > 1000;
+  if (truncated) rows.length = 1000;
+  const aging = { currentCents: 0, days1To30Cents: 0, days31To60Cents: 0, days61To90Cents: 0, over90DaysCents: 0 };
+  const suppliers = new Map();
+  for (const invoice of rows) {
+    invoice.invoice_date = dateOnly(invoice.invoice_date);
+    invoice.due_date = dateOnly(invoice.due_date);
+    invoice.total_cents = finiteNumber(invoice.total_cents);
+    invoice.paid_cents = finiteNumber(invoice.paid_cents);
+    invoice.outstanding_cents = finiteNumber(invoice.outstanding_cents);
+    invoice.days_overdue = Number(invoice.days_overdue);
+    if (invoice.due_date >= context.endDate) aging.currentCents += invoice.outstanding_cents;
+    else if (invoice.days_overdue <= 30) aging.days1To30Cents += invoice.outstanding_cents;
+    else if (invoice.days_overdue <= 60) aging.days31To60Cents += invoice.outstanding_cents;
+    else if (invoice.days_overdue <= 90) aging.days61To90Cents += invoice.outstanding_cents;
+    else aging.over90DaysCents += invoice.outstanding_cents;
+    const supplier = suppliers.get(invoice.supplier_id) || {
+      id: invoice.supplier_id,
+      name: invoice.supplier_name,
+      outstandingCents: 0,
+      overdueCents: 0,
+      invoiceCount: 0,
+    };
+    supplier.outstandingCents += invoice.outstanding_cents;
+    if (invoice.days_overdue > 0) supplier.overdueCents += invoice.outstanding_cents;
+    if (invoice.outstanding_cents > 0) supplier.invoiceCount += 1;
+    suppliers.set(invoice.supplier_id, supplier);
+  }
+  const supplierFilter = supplierId ? ' AND supplier_id = ?' : '';
+  const supplierParams = supplierId ? [supplierId] : [];
+  const [received, payments] = await Promise.all([
+    getOne(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(total_cents), 0) AS amount_cents
+       FROM supplier_invoices WHERE business_id = ? AND status <> 'cancelled'
+         AND invoice_date >= ? AND invoice_date <= ?${supplierFilter}`,
+      [businessId, context.startDate, context.endDate, ...supplierParams]
+    ),
+    getOne(
+      `SELECT COALESCE(SUM(amount_cents), 0) AS amount_cents,
+         AVG(DATEDIFF(p.payment_date, si.invoice_date)) AS average_days
+       FROM supplier_invoice_payments p
+       JOIN supplier_invoices si
+         ON si.id = p.supplier_invoice_id AND si.business_id = p.business_id
+       WHERE p.business_id = ? AND p.payment_date >= ? AND p.payment_date <= ?${supplierId ? ' AND si.supplier_id = ?' : ''}`,
+      [businessId, context.startDate, context.endDate, ...supplierParams]
+    ),
+  ]);
+  return {
+    range: { startDate: context.startDate, endDate: context.endDate, asOfDate: context.endDate },
+    currency: context.business.currency,
+    summary: {
+      outstandingCents: rows.reduce((sum, invoice) => sum + invoice.outstanding_cents, 0),
+      overdueCents: aging.days1To30Cents + aging.days31To60Cents + aging.days61To90Cents + aging.over90DaysCents,
+      overdueCount: rows.filter((invoice) => invoice.outstanding_cents > 0 && invoice.days_overdue > 0).length,
+      partiallyPaidCount: rows.filter((invoice) => invoice.outstanding_cents > 0 && invoice.paid_cents > 0).length,
+      invoicesReceivedCount: finiteNumber(received.count),
+      invoicesReceivedCents: finiteNumber(received.amount_cents),
+      paymentsMadeCents: finiteNumber(payments.amount_cents),
+      averagePaymentDays: payments.average_days === null ? null : Math.max(0, Math.round(Number(payments.average_days) * 100) / 100),
+    },
+    aging,
+    truncated,
+    suppliers: [...suppliers.values()].sort((a, b) => b.overdueCents - a.overdueCents).slice(0, 500),
+    invoices: rows,
+  };
+}
+
 async function getExportRows(businessId, type, filters = {}) {
   const context = await getContext(businessId, filters);
   let title;
@@ -640,6 +891,33 @@ async function getExportRows(businessId, type, filters = {}) {
       Subject: row.subject,
       Detail: row.detail,
     }));
+  } else if (type === 'receivables') {
+    const data = await getReceivablesReport(businessId, filters);
+    title = `Accounts receivable ageing (invoice balances; POS sales are excluded${data.truncated ? '; latest 1,000 only' : ''})`;
+    rows = data.invoices.map((row) => ({
+      Customer: row.customer_name,
+      Invoice: row.invoice_number,
+      'Invoice date': row.invoice_date,
+      'Due date': row.due_date,
+      'Amount in cents': row.total_cents,
+      'Paid in cents': row.paid_cents,
+      'Credited in cents': row.credited_cents,
+      'Outstanding in cents': row.outstanding_cents,
+      'Days overdue': row.days_overdue,
+    }));
+  } else if (type === 'payables') {
+    const data = await getPayablesReport(businessId, filters);
+    title = `Accounts payable ageing (supplier invoices; linked expenses are not counted twice${data.truncated ? '; latest 1,000 only' : ''})`;
+    rows = data.invoices.map((row) => ({
+      Supplier: row.supplier_name,
+      'Supplier invoice': row.supplier_invoice_number,
+      'Invoice date': row.invoice_date,
+      'Due date': row.due_date,
+      'Amount in cents': row.total_cents,
+      'Paid in cents': row.paid_cents,
+      'Outstanding in cents': row.outstanding_cents,
+      'Days overdue': row.days_overdue,
+    }));
   } else {
     throw new Error('INVALID_REPORT_TYPE');
   }
@@ -674,5 +952,7 @@ module.exports = {
   getInventoryReport,
   getCustomersReport,
   getActivityReport,
+  getReceivablesReport,
+  getPayablesReport,
   exportReportCsv,
 };
