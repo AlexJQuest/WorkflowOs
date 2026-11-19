@@ -24,7 +24,7 @@ function escapeHtml(value) {
   }[character]));
 }
 
-async function sendWithResend({ to, subject, html, filename, pdf }) {
+async function sendViaResend({ to, subject, html, filename, pdf, replyTo }) {
   if (!isEmailConfigured()) throw new Error('EMAIL_NOT_CONFIGURED');
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -37,7 +37,8 @@ async function sendWithResend({ to, subject, html, filename, pdf }) {
       to: [to],
       subject,
       html,
-      attachments: [{ filename, content: pdf.toString('base64') }],
+      ...(replyTo ? { reply_to: replyTo } : {}),
+      ...(pdf ? { attachments: [{ filename, content: pdf.toString('base64') }] } : {}),
     }),
     signal: AbortSignal.timeout(30000),
   });
@@ -55,6 +56,14 @@ async function sendWithResend({ to, subject, html, filename, pdf }) {
     throw new Error(`EMAIL_PROVIDER_REJECTED:${reason}`);
   }
   return { provider: 'resend', messageId: String(body.id).slice(0, 191) };
+}
+
+async function sendWithResend({ to, subject, html, filename, pdf }) {
+  return sendViaResend({ to, subject, html, filename, pdf });
+}
+
+async function sendPlainEmail({ to, subject, html, replyTo }) {
+  return sendViaResend({ to, subject, html, replyTo });
 }
 
 async function recordAttempt({ businessId, userId, invoiceId, email, subject, filename, pdf, html }) {
@@ -226,4 +235,5 @@ module.exports = {
   listInvoiceEmailLogs,
   sendInvoiceEmail,
   sendReceiptEmail,
+  sendPlainEmail,
 };

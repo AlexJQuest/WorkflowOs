@@ -386,7 +386,7 @@ function getRevenueTrends(
 async function getDashboardData(businessId, options = {}) {
   const business = await queryOne(
     `
-    SELECT id, name, currency, timezone
+    SELECT id, name, currency, timezone, owner_user_id
     FROM businesses
     WHERE id = ?
     `,
@@ -394,6 +394,7 @@ async function getDashboardData(businessId, options = {}) {
   );
 
   if (!business) throw new Error('BUSINESS_NOT_FOUND');
+  const isOwner = Number(business.owner_user_id) === Number(options.userId);
 
   const now = options.now
     ? new Date(options.now)
@@ -769,7 +770,7 @@ async function getDashboardData(businessId, options = {}) {
     .sort((a, b) => b.grossProfitCents - a.grossProfitCents)[0] || null;
 
   const nextWeekDate = addDays(todayDate, 7);
-  const [receivableStats, payableStats, paymentStats, overdueInvoices, dueSupplierInvoices, outstandingDeliveries] =
+  const [receivableStats, payableStats, paymentStats, overdueInvoices, dueSupplierInvoices, outstandingDeliveries, payrollStats] =
     await Promise.all([
       queryOne(
         `SELECT
@@ -861,6 +862,29 @@ async function getDashboardData(businessId, options = {}) {
          ORDER BY si.id DESC LIMIT 5`,
         [businessId]
       ),
+      isOwner ? queryOne(
+        `SELECT
+           COALESCE(SUM(CASE WHEN r.period_start >= ? AND r.period_start <= ?
+             THEN r.total_net_cents ELSE 0 END), 0) AS finalised_net_month_cents,
+           COALESCE(SUM(GREATEST(r.total_net_cents - COALESCE(p.paid_cents, 0), 0)), 0)
+             AS outstanding_cents,
+           (SELECT COALESCE(SUM(amount_cents), 0)
+            FROM payroll_run_payments
+            WHERE business_id = ? AND paid_at >= ? AND paid_at <= ?)
+             AS payments_month_cents
+         FROM payroll_runs r
+         LEFT JOIN (
+           SELECT business_id, payroll_run_id, SUM(amount_cents) AS paid_cents
+           FROM payroll_run_payments
+           WHERE business_id = ? AND paid_at <= ?
+           GROUP BY business_id, payroll_run_id
+         ) p ON p.business_id = r.business_id AND p.payroll_run_id = r.id
+         WHERE r.business_id = ? AND r.status = 'finalized'`,
+        [
+          monthStartDate, todayDate, businessId, monthStartDate, todayDate,
+          businessId, todayDate, businessId,
+        ]
+      ) : Promise.resolve(null),
     ]);
 
   // ------------------------------------------------
@@ -944,6 +968,11 @@ async function getDashboardData(businessId, options = {}) {
           dueWithinWeek: dueSupplierInvoices.length,
           paymentsThisMonthCents: numeric(paymentStats?.supplier_month_cents),
         },
+        payroll: isOwner ? {
+          finalisedNetPayThisMonthCents: numeric(payrollStats?.finalised_net_month_cents),
+          paymentsThisMonthCents: numeric(payrollStats?.payments_month_cents),
+          outstandingCents: numeric(payrollStats?.outstanding_cents),
+        } : null,
         actionItems: [
           ...overdueInvoices.map((invoice) => ({
             type: 'customer_invoice_overdue',
@@ -968,6 +997,15 @@ async function getDashboardData(businessId, options = {}) {
             detail: invoice.supplier_invoice_number,
             view: 'inventory',
           })),
+          ...(numeric(payrollStats?.outstanding_cents) > 0
+            ? [{
+                type: 'payroll_payment_outstanding',
+                title: 'Finalised payroll payments outstanding',
+                detail: 'Payment records track transfers made outside WorkflowOS',
+                amountCents: numeric(payrollStats.outstanding_cents),
+                view: 'payroll',
+              }]
+            : []),
         ],
       },
 

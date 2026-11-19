@@ -1,11 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('node:path');
-
-const databasePath = path.join(__dirname, '..', 'database', `test-product-edit-${Date.now()}.db`);
-process.env.DATABASE_PATH = databasePath;
-const app = require('../server');
+const crypto = require('node:crypto');
 const db = require('../src/api/database');
+const app = require('../server');
+const { cleanupBusiness } = require('./helpers/database');
 
 function startServer() {
   return new Promise((resolve) => {
@@ -34,15 +32,29 @@ function request(baseUrl, token, endpoint, options = {}) {
   });
 }
 
+async function queryOne(sql, params) {
+  const [rows] = await db.execute(sql, params);
+  return rows[0];
+}
+
 test('product edit persists permitted fields, tracks stock, protects history, and isolates tenants', async (t) => {
   const server = await startServer();
-  t.after(() => {
-    server.close();
-    db.close();
+  const accounts = [];
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    for (const account of accounts) {
+      await cleanupBusiness(db, account.businessId, account.userId);
+    }
+    await db.end();
   });
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  const first = await register(baseUrl, 'edit-one@example.com', 'Edit One');
-  const second = await register(baseUrl, 'edit-two@example.com', 'Edit Two');
+  const suffix = crypto.randomUUID();
+  const first = await register(baseUrl, `edit-one-${suffix}@example.com`, `Edit One ${suffix}`);
+  const second = await register(baseUrl, `edit-two-${suffix}@example.com`, `Edit Two ${suffix}`);
+  for (const account of [first, second]) {
+    const [sessions] = await db.execute('SELECT user_id, business_id FROM sessions WHERE id = ?', [account.sessionToken]);
+    accounts.push({ businessId: sessions[0].business_id, userId: sessions[0].user_id });
+  }
 
   const productCreate = await request(baseUrl, first.sessionToken, '/api/products', {
     method: 'POST',
@@ -59,7 +71,7 @@ test('product edit persists permitted fields, tracks stock, protects history, an
   });
   assert.equal(saleResponse.status, 201);
   const saleId = (await saleResponse.json()).sale.id;
-  const originalSaleItem = db.prepare('SELECT * FROM sale_items WHERE sale_id = ?').get(saleId);
+  const originalSaleItem = await queryOne('SELECT * FROM sale_items WHERE sale_id = ?', [saleId]);
   assert.equal(originalSaleItem.product_name_snapshot, 'Old name');
   assert.equal(originalSaleItem.unit_price_cents, 1000);
   assert.equal(originalSaleItem.unit_cost_cents, 400);
@@ -100,9 +112,9 @@ test('product edit persists permitted fields, tracks stock, protects history, an
   assert.equal(persistedRead.status, 200);
   assert.equal((await persistedRead.json()).product.name, 'New name');
 
-  const currentStock = db.prepare('SELECT quantity_on_hand, reorder_level FROM inventory WHERE business_id = ? AND product_id = ?').get(product.business_id, product.id);
+  const currentStock = await queryOne('SELECT quantity_on_hand, reorder_level FROM inventory WHERE business_id = ? AND product_id = ?', [product.business_id, product.id]);
   assert.deepEqual(currentStock, { quantity_on_hand: 13, reorder_level: 4 });
-  const adjustment = db.prepare(`SELECT movement_type, quantity, notes FROM inventory_movements WHERE business_id = ? AND product_id = ? ORDER BY id DESC LIMIT 1`).get(product.business_id, product.id);
+  const adjustment = await queryOne('SELECT movement_type, quantity, notes FROM inventory_movements WHERE business_id = ? AND product_id = ? ORDER BY id DESC LIMIT 1', [product.business_id, product.id]);
   assert.equal(adjustment.movement_type, 'receipt');
   assert.equal(adjustment.quantity, 5, 'stock was 8 after the sale and changed to 13');
   assert.match(adjustment.notes, /Product edit/);
@@ -120,10 +132,10 @@ test('product edit persists permitted fields, tracks stock, protects history, an
     method: 'PUT', body: JSON.stringify({ quantityOnHand: 6 }),
   });
   assert.equal(decrementStock.status, 200);
-  const decrement = db.prepare(`SELECT movement_type, quantity FROM inventory_movements WHERE business_id = ? AND product_id = ? ORDER BY id DESC LIMIT 1`).get(product.business_id, product.id);
+  const decrement = await queryOne('SELECT movement_type, quantity FROM inventory_movements WHERE business_id = ? AND product_id = ? ORDER BY id DESC LIMIT 1', [product.business_id, product.id]);
   assert.deepEqual(decrement, { movement_type: 'adjustment', quantity: -7 });
 
-  const historicalAfterEdit = db.prepare('SELECT * FROM sale_items WHERE sale_id = ?').get(saleId);
+  const historicalAfterEdit = await queryOne('SELECT * FROM sale_items WHERE sale_id = ?', [saleId]);
   assert.equal(historicalAfterEdit.product_name_snapshot, 'Old name');
   assert.equal(historicalAfterEdit.unit_price_cents, 1000);
   assert.equal(historicalAfterEdit.unit_cost_cents, 400);
@@ -158,7 +170,7 @@ test('product edit persists permitted fields, tracks stock, protects history, an
   const archiveResponse = await request(baseUrl, first.sessionToken, `/api/products/${product.id}/archive`, { method: 'POST' });
   assert.equal(archiveResponse.status, 200);
   assert.equal((await archiveResponse.json()).product.is_active, 0);
-  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM sale_items WHERE product_id = ?').get(product.id).count, 1, 'archive retains sale history');
+  assert.equal((await queryOne('SELECT COUNT(*) AS count FROM sale_items WHERE product_id = ?', [product.id])).count, 1, 'archive retains sale history');
   const unavailableSearch = await request(baseUrl, first.sessionToken, '/api/products/search?q=New%20name');
   assert.deepEqual((await unavailableSearch.json()).products, []);
   const inactiveEdit = await request(baseUrl, first.sessionToken, `/api/products/${product.id}`, {

@@ -48,6 +48,14 @@ const {
   makeStatementPdf,
 } = require('./src/api/financial-pdf.service');
 const reportsService = require('./src/api/reports.service');
+const employeesService = require('./src/api/employees.service');
+const contactService = require('./src/api/contact.service');
+const peopleWorkflows = require('./src/api/people-workflows.service');
+const payrollRules = require('./src/api/payroll-rules.service');
+const payrollRuns = require('./src/api/payroll-runs.service');
+const payrollPayments = require('./src/api/payroll-payments.service');
+const payrollAccess = require('./src/api/payroll-access.service');
+const { makePayslipPdf } = require('./src/api/payroll-pdf.service');
 
 const {
   searchBusinessProducts,
@@ -86,6 +94,18 @@ function asyncHandler(handler) {
   return (req, res, next) => {
     Promise.resolve(handler(req, res, next)).catch(next);
   };
+}
+
+function peopleWorkflowRoute(handler, status = 200) {
+  return asyncHandler(async (req, res) => {
+    try {
+      return res.status(status).json(await handler(req));
+    } catch (error) {
+      const response = handlePeopleWorkflowError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  });
 }
 
 function handleExpenseError(error, res) {
@@ -189,6 +209,85 @@ function handlePayablesError(error, res) {
   return response
     ? res.status(response[0]).json({ error: response[1] })
     : null;
+}
+
+function handleEmployeeError(error, res) {
+  if (isDuplicateError(error)) {
+    return res.status(409).json({ error: 'An employee with this number already exists in this business' });
+  }
+  const responses = {
+    FORBIDDEN: [403, 'Only the business owner can access employee and compensation records'],
+    INVALID_EMPLOYEE: [400, 'Employee details are invalid'],
+    INVALID_EMPLOYEE_FILTER: [400, 'Employee filters are invalid'],
+    INVALID_COMPENSATION: [400, 'Compensation details are invalid'],
+    INVALID_BUSINESS: [404, 'Business not found'],
+    EMPLOYEE_NOT_FOUND: [404, 'Employee not found'],
+    COMPENSATION_PERIOD_OVERLAP: [409, 'Compensation periods cannot overlap or start on the same date'],
+  };
+  const response = responses[error.message];
+  return response ? res.status(response[0]).json({ error: response[1] }) : null;
+}
+
+function handlePeopleWorkflowError(error, res) {
+  if (isDuplicateError(error)) {
+    return res.status(409).json({ error: 'This record or idempotency key already exists' });
+  }
+  const responses = {
+    FORBIDDEN: [403, 'Only the business owner can manage timesheets and leave records'],
+    INVALID_EMPLOYEE: [400, 'Employee selection is invalid'],
+    EMPLOYEE_NOT_FOUND: [404, 'Employee not found'],
+    INVALID_ATTENDANCE: [400, 'Attendance details or date range are invalid'],
+    INVALID_ATTENDANCE_FILTER: [400, 'Attendance filters are invalid'],
+    INVALID_ATTENDANCE_ADJUSTMENT: [400, 'Attendance adjustment details are invalid'],
+    ATTENDANCE_NOT_FOUND: [404, 'Attendance record not found'],
+    ATTENDANCE_IMMUTABLE: [409, 'Approved attendance cannot be edited; create a controlled correction'],
+    ATTENDANCE_UNCHANGED: [409, 'The adjusted value is unchanged'],
+    INVALID_ATTENDANCE_REVIEW: [400, 'Attendance review details are invalid'],
+    ATTENDANCE_NOT_REVIEWABLE: [409, 'Only submitted attendance can be reviewed'],
+    INVALID_LEAVE_TYPE: [400, 'Leave type details are invalid'],
+    LEAVE_TYPE_NOT_FOUND: [404, 'Leave type not found'],
+    INVALID_LEAVE_BALANCE: [400, 'Leave balance adjustment details are invalid'],
+    INVALID_LEAVE_REQUEST: [400, 'Leave request details are invalid'],
+    LEAVE_REQUEST_NOT_FOUND: [404, 'Leave request not found'],
+    LEAVE_REQUEST_NOT_REVIEWABLE: [409, 'Only pending leave requests can be reviewed'],
+    INVALID_LEAVE_REVIEW: [400, 'Leave review details are invalid'],
+    LEAVE_DATES_OVERLAP: [409, 'This employee already has pending or approved leave on those dates'],
+    LEAVE_BALANCE_INSUFFICIENT: [409, 'The employee has insufficient leave balance and no authorised override was supplied'],
+    INVALID_PAYROLL_RULE_SET: [400, 'The statutory rule set or PAYE bands are invalid'],
+    PAYROLL_RULE_DATE_OVERLAP: [409, 'A statutory rule set already covers part of these effective dates'],
+    PAYROLL_CURRENCY_NOT_ZAR: [400, 'South African statutory rules require a ZAR business currency'],
+    INVALID_PAYROLL_RUN: [400, 'Payroll runs must cover a full calendar month with a valid pay date'],
+    INVALID_PAYROLL_RUN_LINES: [400, 'Gross pay inputs must include exactly one valid line for each eligible employee'],
+    PAYROLL_RULE_SET_MISSING: [409, 'No complete statutory rule set covers the payroll period'],
+    PAYROLL_NET_NEGATIVE: [409, 'Deductions exceed gross pay for at least one employee'],
+    PAYROLL_RUN_NOT_FOUND: [404, 'Payroll run not found'],
+    INVALID_PAYROLL_RUN_TRANSITION: [400, 'Payroll run transition is invalid'],
+    PAYROLL_RUN_NOT_TRANSITIONABLE: [409, 'Payroll run cannot move to that status'],
+    EMPLOYEE_EMAIL_REQUIRED: [400, 'Add a valid employee email before inviting them to the portal'],
+    EMPLOYEE_PORTAL_ALREADY_LINKED: [409, 'This employee already has portal access or this account is linked elsewhere'],
+    INVALID_EMPLOYEE_PORTAL_ACTIVATION: [400, 'The activation token or password is invalid'],
+    EMPLOYEE_PORTAL_INVITATION_INVALID: [410, 'This employee portal invitation is invalid or expired'],
+    EMPLOYEE_PORTAL_ACCOUNT_EXISTS: [409, 'An account already exists; use its current password to accept the invitation'],
+    INVALID_PAYROLL_PAYMENT: [400, 'Payment details are invalid'],
+    PAYROLL_RUN_NOT_PAYABLE: [409, 'Payments can only be recorded for finalized payroll runs'],
+    PAYROLL_PAYMENT_KEY_CONFLICT: [409, 'This payment request key has already been used for different details'],
+    PAYROLL_PAYMENT_EXCEEDS_BALANCE: [409, "The payment exceeds the employee's remaining net pay"],
+    PAYROLL_RUN_LINE_NOT_FOUND: [404, 'Payroll employee line not found'],
+  };
+  const response = responses[error.message];
+  return response ? res.status(response[0]).json({ error: response[1] }) : null;
+}
+
+function handleContactError(error, res) {
+  const responses = {
+    CONTACT_SPAM: [400, 'The contact form could not be processed'],
+    INVALID_CONTACT_MESSAGE: [400, 'Enter a name, valid email address, subject and message'],
+    CONTACT_NOT_CONFIGURED: [503, 'Contact delivery is not configured'],
+    CONTACT_RATE_LIMITED: [429, 'Too many messages were submitted. Try again later.'],
+    CONTACT_DELIVERY_FAILED: [502, 'The email provider could not accept your message'],
+  };
+  const response = responses[error.message];
+  return response ? res.status(response[0]).json({ error: response[1] }) : null;
 }
 
 function handleDocumentError(error, res) {
@@ -325,6 +424,17 @@ app.get('/api/health', asyncHandler(async (req, res) => {
     service: 'workflowos',
     database: 'connected',
   });
+}));
+
+app.post('/api/contact', asyncHandler(async (req, res) => {
+  try {
+    const result = await contactService.submitContact(req.body || {}, req.ip);
+    return res.status(202).json({ accepted: true, provider: result.provider });
+  } catch (error) {
+    const response = handleContactError(error, res);
+    if (response) return response;
+    throw error;
+  }
 }));
 
 // -----------------------------------------------------------------------------
@@ -581,6 +691,7 @@ app.get('/api/session', requireAuth, asyncHandler(async (req, res) => {
           businessType: activeBusiness.business_type,
           currency: activeBusiness.currency,
           timezone: activeBusiness.timezone,
+          isOwner: Number(activeBusiness.owner_user_id) === Number(req.user.id),
         }
       : null,
     memberships: memberships.map((row) => ({
@@ -599,6 +710,7 @@ app.get('/api/dashboard', requireAuth, requireBusinessAccess,
   asyncHandler(async (req, res) => {
     try {
       const data = await getDashboardData(Number(req.businessId), {
+        userId: req.user.id,
         period: req.query.period,
         granularity: req.query.granularity,
         startDate: req.query.startDate,
@@ -1638,6 +1750,380 @@ app.post('/api/documents/:documentId(\\d+)/extractions/:suggestionId(\\d+)/confi
   })
 );
 
+app.get('/api/employees', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await employeesService.listEmployees({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        search: req.query.search,
+        status: req.query.status,
+        page: req.query.page,
+        pageSize: req.query.pageSize,
+      }));
+    } catch (error) {
+      const response = handleEmployeeError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/employees', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const employee = await employeesService.createEmployee({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        payload: req.body || {},
+      });
+      return res.status(201).json({ employee });
+    } catch (error) {
+      const response = handleEmployeeError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/employees/:employeeId(\\d+)', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const employee = await employeesService.getEmployee({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        employeeId: Number(req.params.employeeId),
+      });
+      if (!employee) return res.status(404).json({ error: 'Employee not found' });
+      return res.json({ employee });
+    } catch (error) {
+      const response = handleEmployeeError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.put('/api/employees/:employeeId(\\d+)', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const employee = await employeesService.updateEmployee({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        employeeId: Number(req.params.employeeId),
+        payload: req.body || {},
+      });
+      return res.json({ employee });
+    } catch (error) {
+      const response = handleEmployeeError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/employees/:employeeId(\\d+)/compensation', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      const employee = await employeesService.addCompensation({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        employeeId: Number(req.params.employeeId),
+        payload: req.body || {},
+      });
+      return res.json({ employee });
+    } catch (error) {
+      const response = handleEmployeeError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.post('/api/employees/:employeeId(\\d+)/portal-invitation', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    invitation: await payrollAccess.createEmployeePortalInvitation({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      employeeId: Number(req.params.employeeId),
+    }),
+  }), 201)
+);
+
+app.delete('/api/employees/:employeeId(\\d+)/portal-access', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => payrollAccess.revokeEmployeePortalAccess({
+    businessId: Number(req.businessId),
+    userId: req.user.id,
+    employeeId: Number(req.params.employeeId),
+  }))
+);
+
+app.post('/api/employee-portal/activate',
+  peopleWorkflowRoute(async (req) => payrollAccess.activateEmployeePortal({
+    token: req.body?.token,
+    password: req.body?.password,
+  }), 201)
+);
+
+app.get('/api/employee-portal/payslips', requireAuth,
+  peopleWorkflowRoute(async (req) => ({
+    payslips: await payrollAccess.listEmployeePayslips({ userId: req.user.id }),
+  }))
+);
+
+app.get('/api/employee-portal/payslips/:runId(\\d+).pdf', requireAuth,
+  asyncHandler(async (req, res) => {
+    try {
+      const payslip = await payrollAccess.getEmployeePayslip({
+        userId: req.user.id,
+        runId: Number(req.params.runId),
+      });
+      if (!payslip) return res.status(404).json({ error: 'Payslip not found' });
+      const pdf = await makePayslipPdf({ payslip });
+      return res.status(200)
+        .type('application/pdf')
+        .set('Cache-Control', 'private, no-store')
+        .set('X-Content-Type-Options', 'nosniff')
+        .set('Content-Disposition', `attachment; filename="payslip-${payslip.payroll_run_id}.pdf"`)
+        .send(pdf);
+    } catch (error) {
+      const response = handlePeopleWorkflowError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
+app.get('/api/attendance', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute((req) => peopleWorkflows.listAttendance({
+    businessId: Number(req.businessId),
+    userId: req.user.id,
+    startDate: req.query.startDate,
+    endDate: req.query.endDate,
+    status: req.query.status,
+    page: req.query.page,
+    pageSize: req.query.pageSize,
+  }))
+);
+
+app.post('/api/attendance', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    attendance: await peopleWorkflows.createAttendance({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      payload: req.body || {},
+    }),
+  }), 201)
+);
+
+app.post('/api/attendance/:attendanceId(\\d+)/adjustments', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    attendance: await peopleWorkflows.adjustAttendance({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      attendanceId: Number(req.params.attendanceId),
+      payload: req.body || {},
+    }),
+  }))
+);
+
+app.post('/api/attendance/:attendanceId(\\d+)/review', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    attendance: await peopleWorkflows.reviewAttendance({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      attendanceId: Number(req.params.attendanceId),
+      payload: req.body || {},
+    }),
+  }))
+);
+
+app.get('/api/leave-types', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    leaveTypes: await peopleWorkflows.listLeaveTypes({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+    }),
+  }))
+);
+
+app.post('/api/leave-types', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    leaveType: await peopleWorkflows.createLeaveType({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      payload: req.body || {},
+    }),
+  }), 201)
+);
+
+app.put('/api/leave-types/:leaveTypeId(\\d+)/status', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    leaveType: await peopleWorkflows.setLeaveTypeActive({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      leaveTypeId: Number(req.params.leaveTypeId),
+      isActive: req.body?.isActive,
+    }),
+  }))
+);
+
+app.get('/api/employees/:employeeId(\\d+)/leave-balances', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    balances: await peopleWorkflows.getLeaveBalances({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      employeeId: Number(req.params.employeeId),
+    }),
+  }))
+);
+
+app.post('/api/leave-balances', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    balance: await peopleWorkflows.addLeaveBalance({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      payload: req.body || {},
+    }),
+  }), 201)
+);
+
+app.get('/api/leave-requests', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    leaveRequests: await peopleWorkflows.listLeaveRequests({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      status: req.query.status,
+    }),
+  }))
+);
+
+app.post('/api/leave-requests', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    leaveRequest: await peopleWorkflows.createLeaveRequest({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      payload: req.body || {},
+    }),
+  }), 201)
+);
+
+app.post('/api/leave-requests/:leaveRequestId(\\d+)/review', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    leaveRequest: await peopleWorkflows.reviewLeaveRequest({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      leaveRequestId: Number(req.params.leaveRequestId),
+      payload: req.body || {},
+    }),
+  }))
+);
+
+app.get('/api/payroll/rules', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    ruleSets: await payrollRules.listRuleSets({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+    }),
+  }))
+);
+
+app.post('/api/payroll/rules', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    ruleSet: await payrollRules.createRuleSet({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      payload: req.body || {},
+    }),
+  }), 201)
+);
+
+app.get('/api/payroll/runs', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    runs: await payrollRuns.listRuns({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+    }),
+  }))
+);
+
+app.get('/api/payroll/runs/:runId(\\d+)', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => {
+    const run = await payrollRuns.getRun({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      runId: Number(req.params.runId),
+    });
+    if (!run) throw new Error('PAYROLL_RUN_NOT_FOUND');
+    return { run };
+  })
+);
+
+app.post('/api/payroll/runs', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    run: await payrollRuns.createRun({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      payload: req.body || {},
+    }),
+  }), 201)
+);
+
+app.post('/api/payroll/runs/:runId(\\d+)/transition', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    run: await payrollRuns.transitionRun({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      runId: Number(req.params.runId),
+      decision: req.body?.decision,
+    }),
+  }))
+);
+
+app.post('/api/payroll/runs/:runId(\\d+)/payments', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => payrollPayments.recordPayment({
+    businessId: Number(req.businessId),
+    userId: req.user.id,
+    runId: Number(req.params.runId),
+    payload: req.body || {},
+  }), 201)
+);
+
+app.get('/api/payroll/runs/:runId(\\d+)/payments', requireAuth, requireBusinessAccess,
+  peopleWorkflowRoute(async (req) => ({
+    payments: await payrollPayments.listRunPayments({
+      businessId: Number(req.businessId),
+      userId: req.user.id,
+      runId: Number(req.params.runId),
+    }),
+  }))
+);
+
+app.get('/api/payroll/runs/:runId(\\d+)/employees/:employeeId(\\d+)/payslip.pdf',
+  requireAuth, requireBusinessAccess, asyncHandler(async (req, res) => {
+    try {
+      const payslip = await payrollAccess.getOwnerPayslip({
+        businessId: Number(req.businessId),
+        userId: req.user.id,
+        runId: Number(req.params.runId),
+        employeeId: Number(req.params.employeeId),
+      });
+      if (!payslip) return res.status(404).json({ error: 'Payslip not found' });
+      const pdf = await makePayslipPdf({ payslip });
+      return res.status(200)
+        .type('application/pdf')
+        .set('Cache-Control', 'private, no-store')
+        .set('X-Content-Type-Options', 'nosniff')
+        .set('Content-Disposition', `attachment; filename="payslip-${payslip.payroll_run_id}-${payslip.employee_id}.pdf"`)
+        .send(pdf);
+    } catch (error) {
+      const response = handlePeopleWorkflowError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
 app.get('/api/expenses/categories', requireAuth, requireBusinessAccess,
   asyncHandler(async (req, res) => {
     return res.json({
@@ -1920,6 +2406,9 @@ function handleReportError(error, res) {
       error.message.startsWith('INVALID_PAYABLE')) {
     return res.status(400).json({ error: 'Invalid financial report filter' });
   }
+  if (error.message === 'FORBIDDEN') {
+    return res.status(403).json({ error: 'Only the business owner can view payroll reports' });
+  }
   if (error.message === 'INVALID_BUSINESS') {
     return res.status(404).json({ error: 'Business not found' });
   }
@@ -2031,6 +2520,22 @@ app.get('/api/reports/payables', requireAuth, requireBusinessAccess,
   })
 );
 
+app.get('/api/reports/payroll', requireAuth, requireBusinessAccess,
+  asyncHandler(async (req, res) => {
+    try {
+      return res.json(await reportsService.getPayrollReport(
+        Number(req.businessId),
+        req.user.id,
+        getReportFilters(req.query)
+      ));
+    } catch (error) {
+      const response = handleReportError(error, res);
+      if (response) return response;
+      throw error;
+    }
+  })
+);
+
 app.get('/api/reports/activity', requireAuth, requireBusinessAccess,
   asyncHandler(async (req, res) => {
     try {
@@ -2046,7 +2551,7 @@ app.get('/api/reports/activity', requireAuth, requireBusinessAccess,
   })
 );
 
-app.get('/api/reports/:type(sales|expenses|inventory|customers|profit-loss|activity|receivables|payables).csv',
+app.get('/api/reports/:type(sales|expenses|inventory|customers|profit-loss|activity|receivables|payables|payroll).csv',
   requireAuth,
   requireBusinessAccess,
   asyncHandler(async (req, res) => {
@@ -2054,7 +2559,8 @@ app.get('/api/reports/:type(sales|expenses|inventory|customers|profit-loss|activ
       const csv = await reportsService.exportReportCsv(
         Number(req.businessId),
         req.params.type,
-        getReportFilters(req.query)
+        getReportFilters(req.query),
+        req.user.id
       );
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader(
@@ -2779,6 +3285,12 @@ app.post('/api/logout', requireAuth,
 // -----------------------------------------------------------------------------
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'API endpoint not found' }));
+
+app.get('/employee-portal', (req, res) => {
+  res.set('Cache-Control', 'no-store')
+    .set('Referrer-Policy', 'no-referrer')
+    .sendFile(path.join(__dirname, 'public', 'employee-portal.html'));
+});
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

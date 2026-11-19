@@ -831,7 +831,121 @@ async function getPayablesReport(businessId, filters = {}) {
   };
 }
 
-async function getExportRows(businessId, type, filters = {}) {
+async function getPayrollReport(businessId, userId, filters = {}) {
+  const context = await getContext(businessId, filters);
+  const owner = await getOne(
+    'SELECT id FROM businesses WHERE id = ? AND owner_user_id = ?',
+    [businessId, userId]
+  );
+  if (!owner) throw new Error('FORBIDDEN');
+
+  const runs = await getMany(
+    `SELECT r.id, r.period_start, r.period_end, r.pay_date,
+       r.total_gross_cents, r.total_paye_cents, r.total_uif_employee_cents,
+       r.total_uif_employer_cents, r.total_sdl_cents,
+       r.total_other_deductions_cents, r.total_net_cents,
+       COALESCE(p.paid_cents, 0) AS paid_cents,
+       GREATEST(r.total_net_cents - COALESCE(p.paid_cents, 0), 0)
+         AS outstanding_cents
+     FROM payroll_runs r
+     LEFT JOIN (
+       SELECT business_id, payroll_run_id, SUM(amount_cents) AS paid_cents
+       FROM payroll_run_payments
+       WHERE business_id = ? AND paid_at <= ?
+       GROUP BY business_id, payroll_run_id
+     ) p ON p.business_id = r.business_id AND p.payroll_run_id = r.id
+     WHERE r.business_id = ? AND r.status = 'finalized'
+       AND r.pay_date >= ? AND r.pay_date <= ?
+     ORDER BY r.pay_date DESC, r.id DESC LIMIT 1001`,
+    [businessId, context.endDate, businessId, context.startDate, context.endDate]
+  );
+  const truncated = runs.length > 1000;
+  if (truncated) runs.length = 1000;
+  const employeeLines = await getMany(
+    `SELECT r.id AS payroll_run_id, r.period_start, r.period_end, r.pay_date,
+       e.employee_number, e.first_name, e.last_name,
+       l.gross_cents, l.paye_cents, l.uif_employee_cents,
+       l.uif_employer_cents, l.sdl_cents, l.other_deductions_cents,
+       l.net_cents, COALESCE(p.paid_cents, 0) AS paid_cents,
+       GREATEST(l.net_cents - COALESCE(p.paid_cents, 0), 0) AS outstanding_cents
+     FROM payroll_runs r
+     JOIN payroll_run_lines l ON l.payroll_run_id = r.id AND l.business_id = r.business_id
+     JOIN employees e ON e.id = l.employee_id AND e.business_id = l.business_id
+     LEFT JOIN (
+       SELECT business_id, payroll_run_id, employee_id, SUM(amount_cents) AS paid_cents
+       FROM payroll_run_payments
+       WHERE business_id = ? AND paid_at <= ?
+       GROUP BY business_id, payroll_run_id, employee_id
+     ) p ON p.business_id = l.business_id
+       AND p.payroll_run_id = l.payroll_run_id AND p.employee_id = l.employee_id
+     WHERE r.business_id = ? AND r.status = 'finalized'
+       AND r.pay_date >= ? AND r.pay_date <= ?
+     ORDER BY r.pay_date DESC, e.last_name, e.first_name, e.employee_number
+     LIMIT 1001`,
+    [businessId, context.endDate, businessId, context.startDate, context.endDate]
+  );
+  const linesTruncated = employeeLines.length > 1000;
+  if (linesTruncated) employeeLines.length = 1000;
+
+  const payments = await getOne(
+    `SELECT COALESCE(SUM(p.amount_cents), 0) AS paid_in_period_cents
+     FROM payroll_run_payments p
+     JOIN payroll_runs r
+       ON r.id = p.payroll_run_id AND r.business_id = p.business_id
+     WHERE p.business_id = ? AND r.status = 'finalized'
+       AND p.paid_at >= ? AND p.paid_at <= ?`,
+    [businessId, context.startDate, context.endDate]
+  );
+  const moneyFields = [
+    'total_gross_cents', 'total_paye_cents', 'total_uif_employee_cents',
+    'total_uif_employer_cents', 'total_sdl_cents',
+    'total_other_deductions_cents', 'total_net_cents', 'paid_cents',
+    'outstanding_cents',
+  ];
+  for (const run of runs) {
+    for (const field of moneyFields) run[field] = numeric(run[field]);
+    for (const field of ['period_start', 'period_end', 'pay_date']) {
+      run[field] = dateOnly(run[field]);
+    }
+  }
+  const lineMoneyFields = [
+    'gross_cents', 'paye_cents', 'uif_employee_cents', 'uif_employer_cents',
+    'sdl_cents', 'other_deductions_cents', 'net_cents', 'paid_cents',
+    'outstanding_cents',
+  ];
+  for (const line of employeeLines) {
+    for (const field of lineMoneyFields) line[field] = numeric(line[field]);
+    for (const field of ['period_start', 'period_end', 'pay_date']) {
+      line[field] = dateOnly(line[field]);
+    }
+  }
+
+  return {
+    range: { startDate: context.startDate, endDate: context.endDate, asOfDate: context.endDate },
+    currency: context.business.currency,
+    truncated: truncated || linesTruncated,
+    summary: {
+      runCount: runs.length,
+      employeeLineCount: employeeLines.length,
+      grossCents: runs.reduce((sum, run) => sum + run.total_gross_cents, 0),
+      payeCents: runs.reduce((sum, run) => sum + run.total_paye_cents, 0),
+      employeeUifCents: runs.reduce((sum, run) => sum + run.total_uif_employee_cents, 0),
+      employerCostCents: runs.reduce(
+        (sum, run) => sum + run.total_uif_employer_cents + run.total_sdl_cents,
+        0
+      ),
+      otherDeductionsCents: runs.reduce((sum, run) => sum + run.total_other_deductions_cents, 0),
+      netCents: runs.reduce((sum, run) => sum + run.total_net_cents, 0),
+      paidToDateCents: runs.reduce((sum, run) => sum + run.paid_cents, 0),
+      outstandingCents: runs.reduce((sum, run) => sum + run.outstanding_cents, 0),
+      paymentsRecordedInPeriodCents: numeric(payments.paid_in_period_cents),
+    },
+    runs,
+    employeeLines,
+  };
+}
+
+async function getExportRows(businessId, type, filters = {}, userId) {
   const context = await getContext(businessId, filters);
   let title;
   let rows;
@@ -918,6 +1032,25 @@ async function getExportRows(businessId, type, filters = {}) {
       'Outstanding in cents': row.outstanding_cents,
       'Days overdue': row.days_overdue,
     }));
+  } else if (type === 'payroll') {
+    const data = await getPayrollReport(businessId, userId, filters);
+    title = 'Finalised payroll estimate and payment tracking';
+    rows = data.employeeLines.map((row) => ({
+      'Payroll run': row.payroll_run_id,
+      'Pay period': `${row.period_start} to ${row.period_end}`,
+      'Pay date': row.pay_date,
+      Employee: `${row.first_name} ${row.last_name}`,
+      'Employee number': row.employee_number,
+      'Gross in cents': row.gross_cents,
+      'PAYE estimate in cents': row.paye_cents,
+      'Employee UIF in cents': row.uif_employee_cents,
+      'Other deductions in cents': row.other_deductions_cents,
+      'Net in cents': row.net_cents,
+      'Paid to date in cents': row.paid_cents,
+      'Outstanding in cents': row.outstanding_cents,
+      'Employer UIF in cents': row.uif_employer_cents,
+      'SDL estimate in cents': row.sdl_cents,
+    }));
   } else {
     throw new Error('INVALID_REPORT_TYPE');
   }
@@ -931,8 +1064,8 @@ function csvCell(value) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-async function exportReportCsv(businessId, type, filters = {}) {
-  const { context, title, rows } = await getExportRows(businessId, type, filters);
+async function exportReportCsv(businessId, type, filters = {}, userId) {
+  const { context, title, rows } = await getExportRows(businessId, type, filters, userId);
   const headings = rows.length ? Object.keys(rows[0]) : ['No records'];
   const lines = [
     [context.business.name],
@@ -954,5 +1087,6 @@ module.exports = {
   getActivityReport,
   getReceivablesReport,
   getPayablesReport,
+  getPayrollReport,
   exportReportCsv,
 };

@@ -241,7 +241,8 @@ async function getBusinessMembershipsForUser(userId) {
        b.name AS business_name,
        b.business_type,
        b.currency,
-       b.timezone
+       b.timezone,
+       b.owner_user_id
      FROM business_memberships bm
      JOIN businesses b ON b.id = bm.business_id
      WHERE bm.user_id = ?

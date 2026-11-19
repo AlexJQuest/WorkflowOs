@@ -1,13 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
-const path = require('path');
-
-const databasePath = path.join(__dirname, '..', 'database', `test-business-data-${Date.now()}.db`);
-if (fs.existsSync(databasePath)) fs.unlinkSync(databasePath);
-process.env.DATABASE_PATH = databasePath;
-
+const crypto = require('node:crypto');
+const db = require('../src/api/database');
 const app = require('../server');
+const { cleanupBusiness } = require('./helpers/database');
 
 function getServer() {
   return new Promise((resolve) => {
@@ -15,9 +11,18 @@ function getServer() {
   });
 }
 
-test('tenant-scoped products and customers remain isolated', async () => {
+test('tenant-scoped products and customers remain isolated', async (t) => {
   const server = await getServer();
   const port = server.address().port;
+  const suffix = crypto.randomUUID();
+  const accounts = [];
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    for (const account of accounts) {
+      await cleanupBusiness(db, account.businessId, account.userId);
+    }
+    await db.end();
+  });
 
   const primaryUser = await fetch(`http://127.0.0.1:${port}/api/register`, {
     method: 'POST',
@@ -25,14 +30,18 @@ test('tenant-scoped products and customers remain isolated', async () => {
     body: JSON.stringify({
       firstName: 'Nandi',
       lastName: 'Mokoena',
-      email: 'nandi@example.com',
+      email: `nandi-${suffix}@example.com`,
       password: 'StrongPassword!123',
-      businessName: 'Nandi Hair Studio',
+      businessName: `Nandi Hair Studio ${suffix}`,
       businessType: 'hair_salon',
     }),
   });
 
   const primaryBody = await primaryUser.json();
+  accounts.push({
+    businessId: primaryBody.business?.id,
+    userId: primaryBody.user?.id,
+  });
   assert.equal(primaryUser.status, 201, 'primary registration should succeed');
 
   const secondaryUser = await fetch(`http://127.0.0.1:${port}/api/register`, {
@@ -41,14 +50,18 @@ test('tenant-scoped products and customers remain isolated', async () => {
     body: JSON.stringify({
       firstName: 'Thabo',
       lastName: 'Nkosi',
-      email: 'thabo@example.com',
+      email: `thabo-${suffix}@example.com`,
       password: 'AnotherStrong!456',
-      businessName: 'Thabo Retail',
+      businessName: `Thabo Retail ${suffix}`,
       businessType: 'retail',
     }),
   });
 
   const secondaryBody = await secondaryUser.json();
+  accounts.push({
+    businessId: secondaryBody.business?.id,
+    userId: secondaryBody.user?.id,
+  });
   assert.equal(secondaryUser.status, 201, 'secondary registration should succeed');
 
   const productRes = await fetch(`http://127.0.0.1:${port}/api/products`, {
@@ -57,12 +70,12 @@ test('tenant-scoped products and customers remain isolated', async () => {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${primaryBody.sessionToken}`,
     },
-    body: JSON.stringify({ name: 'Hair Serum', sku: 'SER-001', price: 249.99, cost: 129.5 }),
+    body: JSON.stringify({ name: `Hair Serum ${suffix}`, sku: `SER-${suffix.slice(0, 8)}`, price: 249.99, cost: 129.5 }),
   });
 
   const productBody = await productRes.json();
   assert.equal(productRes.status, 201, 'product creation should succeed');
-  assert.equal(productBody.product.name, 'Hair Serum');
+  assert.equal(productBody.product.name, `Hair Serum ${suffix}`);
 
   const customerRes = await fetch(`http://127.0.0.1:${port}/api/customers`, {
     method: 'POST',
@@ -70,7 +83,7 @@ test('tenant-scoped products and customers remain isolated', async () => {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${primaryBody.sessionToken}`,
     },
-    body: JSON.stringify({ name: 'Jane Doe', email: 'jane@example.com', phone: '0821112233' }),
+    body: JSON.stringify({ name: 'Jane Doe', email: `jane-${suffix}@example.com`, phone: '0821112233' }),
   });
 
   const customerBody = await customerRes.json();
@@ -82,7 +95,7 @@ test('tenant-scoped products and customers remain isolated', async () => {
   });
   const primaryProductsBody = await primaryProducts.json();
   assert.equal(primaryProducts.status, 200, 'primary business should fetch its own products');
-  assert.ok(primaryProductsBody.products.some((product) => product.name === 'Hair Serum'));
+  assert.ok(primaryProductsBody.products.some((product) => product.name === `Hair Serum ${suffix}`));
 
   const secondaryProducts = await fetch(`http://127.0.0.1:${port}/api/products`, {
     headers: { Authorization: `Bearer ${secondaryBody.sessionToken}` },
@@ -90,7 +103,7 @@ test('tenant-scoped products and customers remain isolated', async () => {
   const secondaryProductsBody = await secondaryProducts.json();
   assert.equal(secondaryProducts.status, 200, 'secondary business should fetch its own products');
   assert.equal(
-    secondaryProductsBody.products.some((product) => product.name === 'Hair Serum'),
+    secondaryProductsBody.products.some((product) => product.name === `Hair Serum ${suffix}`),
     false,
     'secondary business must not see primary business products'
   );
@@ -100,7 +113,7 @@ test('tenant-scoped products and customers remain isolated', async () => {
   });
   const primaryCustomersBody = await primaryCustomers.json();
   assert.equal(primaryCustomers.status, 200, 'primary business should fetch its own customers');
-  assert.ok(primaryCustomersBody.customers.some((customer) => customer.email === 'jane@example.com'));
+  assert.ok(primaryCustomersBody.customers.some((customer) => customer.email === `jane-${suffix}@example.com`));
 
   const secondaryCustomers = await fetch(`http://127.0.0.1:${port}/api/customers`, {
     headers: { Authorization: `Bearer ${secondaryBody.sessionToken}` },
@@ -108,12 +121,8 @@ test('tenant-scoped products and customers remain isolated', async () => {
   const secondaryCustomersBody = await secondaryCustomers.json();
   assert.equal(secondaryCustomers.status, 200, 'secondary business should fetch its own customers');
   assert.equal(
-    secondaryCustomersBody.customers.some((customer) => customer.email === 'jane@example.com'),
+    secondaryCustomersBody.customers.some((customer) => customer.email === `jane-${suffix}@example.com`),
     false,
     'secondary business must not see primary business customers'
   );
-
-  server.close();
-  const db = require('../src/api/database');
-  db.close();
 });

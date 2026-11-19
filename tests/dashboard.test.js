@@ -1,11 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('node:path');
-
-const databasePath = path.join(__dirname, '..', 'database', `test-dashboard-${Date.now()}.db`);
-process.env.DATABASE_PATH = databasePath;
-const app = require('../server');
+const crypto = require('node:crypto');
 const db = require('../src/api/database');
+const app = require('../server');
+const { cleanupBusiness } = require('./helpers/database');
 
 function getServer() {
   return new Promise((resolve) => {
@@ -43,31 +41,40 @@ async function api(baseUrl, token, endpoint, options = {}) {
 
 test('dashboard derives sales KPIs, rankings, stock, and excludes refunded sales per tenant', async (t) => {
   const server = await getServer();
-  t.after(() => {
-    server.close();
-    db.close();
+  const accounts = [];
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    for (const account of accounts) {
+      await cleanupBusiness(db, account.businessId, account.userId);
+    }
+    await db.end();
   });
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  const owner = await register(baseUrl, 'dashboard-owner@example.com', 'Owner Store');
-  const other = await register(baseUrl, 'dashboard-other@example.com', 'Other Store');
+  const suffix = crypto.randomUUID();
+  const owner = await register(baseUrl, `dashboard-owner-${suffix}@example.com`, `Owner Store ${suffix}`);
+  const other = await register(baseUrl, `dashboard-other-${suffix}@example.com`, `Other Store ${suffix}`);
+  for (const account of [owner, other]) {
+    const session = await (await api(baseUrl, account.sessionToken, '/api/session')).json();
+    accounts.push({ businessId: session.business.id, userId: session.user.id });
+  }
 
   const productResponse = await api(baseUrl, owner.sessionToken, '/api/products', {
     method: 'POST',
-    body: JSON.stringify({ name: 'Coffee', sku: 'COF-1', category: 'Drinks', price: 25, cost: 10, initialStock: 4, reorderLevel: 3 }),
+    body: JSON.stringify({ name: `Coffee ${suffix}`, sku: `COF-${suffix.slice(0, 8)}`, category: 'Drinks', price: 25, cost: 10, initialStock: 4, reorderLevel: 3 }),
   });
   assert.equal(productResponse.status, 201);
   const product = (await productResponse.json()).product;
 
   const secondProductResponse = await api(baseUrl, owner.sessionToken, '/api/products', {
     method: 'POST',
-    body: JSON.stringify({ name: 'Tea', sku: 'TEA-1', category: 'Drinks', price: 18, cost: 7, initialStock: 4, reorderLevel: 2 }),
+    body: JSON.stringify({ name: `Tea ${suffix}`, sku: `TEA-${suffix.slice(0, 8)}`, category: 'Drinks', price: 18, cost: 7, initialStock: 4, reorderLevel: 2 }),
   });
   assert.equal(secondProductResponse.status, 201);
   const secondProduct = (await secondProductResponse.json()).product;
 
   const customerResponse = await api(baseUrl, owner.sessionToken, '/api/customers', {
     method: 'POST',
-    body: JSON.stringify({ name: 'A customer', email: 'customer@example.com' }),
+    body: JSON.stringify({ name: `A customer ${suffix}`, email: `customer-${suffix}@example.com` }),
   });
   assert.equal(customerResponse.status, 201);
   const customer = (await customerResponse.json()).customer;
@@ -125,7 +132,7 @@ test('dashboard derives sales KPIs, rankings, stock, and excludes refunded sales
 
   const unknownCostProduct = await api(baseUrl, owner.sessionToken, '/api/products', {
     method: 'POST',
-    body: JSON.stringify({ name: 'Cost unknown', price: 9, initialStock: 1 }),
+    body: JSON.stringify({ name: `Cost unknown ${suffix}`, price: 9, initialStock: 1 }),
   });
   const unknownProduct = (await unknownCostProduct.json()).product;
   const unknownCostSale = await api(baseUrl, owner.sessionToken, '/api/sales', {

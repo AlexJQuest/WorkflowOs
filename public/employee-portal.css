@@ -1,0 +1,26 @@
+.portal-header, .portal-footer { width: min(1000px, calc(100% - 48px)); margin: 0 auto; }
+.portal-header { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.portal-header > a:last-child { color: #52635a; font-size: 13px; font-weight: 600; }
+.portal-content { width: min(900px, calc(100% - 48px)); margin: 0 auto 65px; }
+.portal-panel { padding: 28px; border: 1px solid #e5ece7; border-radius: 12px; background: #fff; }
+.portal-panel h2 { margin: 0 0 12px; color: #244332; }
+.portal-form { display: grid; max-width: 520px; gap: 14px; }
+.portal-form label { display: grid; gap: 7px; color: #42564a; font-size: 12px; font-weight: 700; }
+.portal-form input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #dbe5dd; border-radius: 7px; color: #243a2c; background: #fff; font: inherit; }
+.portal-form input:focus-visible, .portal-content button:focus-visible, .portal-header a:focus-visible { outline: 3px solid #e2a53c; outline-offset: 3px; }
+.portal-form .site-button { width: fit-content; }
+.portal-error { min-height: 20px; margin: 0; color: #a33737; font-size: 13px; }
+.portal-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 18px; }
+.portal-slip-list { display: grid; gap: 12px; }
+.portal-slip { padding: 18px; border: 1px solid #e5ece7; border-radius: 9px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.portal-slip h3 { margin: 0 0 5px; color: #274133; font-size: 15px; }
+.portal-slip p, .portal-slip small { margin: 0; color: #718077; font-size: 12px; line-height: 1.6; }
+.portal-slip .site-button { grid-column: 2; grid-row: 1 / span 2; }
+.portal-empty { padding: 22px; border: 1px dashed #ccd9d0; border-radius: 9px; color: #65736a; font-size: 13px; }
+.portal-footer { padding: 18px 0 35px; border-top: 1px solid #e5ece7; color: #718077; font-size: 12px; line-height: 1.7; }
+@media (max-width: 620px) {
+  .portal-header, .portal-footer, .portal-content { width: calc(100% - 32px); }
+  .portal-panel { padding: 20px; }
+  .portal-slip { grid-template-columns: 1fr; }
+  .portal-slip .site-button { grid-column: auto; grid-row: auto; }
+}

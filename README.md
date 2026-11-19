@@ -1,10 +1,10 @@
 # WorkflowOS
 
-WorkflowOS is a lightweight SaaS prototype for South African small businesses. It is designed as a secure, reusable multi-tenant platform with a modular monolith architecture, an SQL-backed database, and an end-to-end onboarding and dashboard workflow.
+WorkflowOS is a lightweight SaaS prototype for South African small businesses. It uses a modular monolith architecture, an SQL-backed database, and an end-to-end onboarding and dashboard workflow.
 
 ## Current status
 
-WorkflowOS is a working local prototype with onboarding, authentication, tenant-scoped products, customers, and expenses; an inventory-aware sales workflow; barcode lookup; product editing; and a database-backed dashboard. Its runtime database is MariaDB. It is not production-ready and still requires human acceptance testing, deployment infrastructure, email/payment services, and security review.
+WorkflowOS is a working local prototype with onboarding, authentication, tenant-scoped products, customers, suppliers, invoices, receipts, credits, expenses, private financial documents, inventory-aware sales, barcode lookup, and reporting. It also supports employee records, attendance and leave, plus owner-configured payroll estimates, invited payslip access, and manual payment tracking. Payroll does not initiate transfers or submit SARS returns, and its rates and gross-pay inputs require owner review. Its runtime database is MariaDB. It is not production-ready and still requires human acceptance testing, deployment infrastructure, configured external services, and security review.
 
 ## Sale totals
 
@@ -36,8 +36,10 @@ zero and may overstate profit; historical cost snapshots are not changed.
 Stock value estimates also treat missing product costs as zero, which can
 understate the value of inventory.
 Reports can be printed or saved as PDF through the browser; the server does not
-generate PDF files. Receipt uploads are not enabled because this deployment
-has no private file-storage service.
+generate report PDF files. Financial documents use private storage outside the
+public web root; configure a persistent, access-controlled storage directory
+before deployment. See [database/README.md](database/README.md) for storage,
+migration, and payroll limitations.
 
 ## Recommended stack
 

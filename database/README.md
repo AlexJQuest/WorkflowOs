@@ -63,3 +63,52 @@ must explicitly consent before a document is sent externally, and extracted
 values remain suggestions requiring human confirmation; they are not applied
 to invoices automatically. Keep all provider credentials in deployment
 secrets, not in source control.
+
+The public contact form sends messages through the same Resend adapter when
+`PUBLIC_CONTACT_EMAIL`, `RESEND_API_KEY`, and `EMAIL_FROM` are configured. Its
+per-process rate limit is a basic abuse control and is not a substitute for
+deployment-level protection in a multi-instance environment. Public Privacy and
+Terms pages are marked as drafts and require approved legal review before
+production use.
+
+The public website is served from `/`, `/about`, `/features`, `/solutions`,
+`/pricing`, `/contact`, `/faq`, `/privacy`, and `/terms`. Pricing and company
+details are not invented; legal pages are draft placeholders and must be
+reviewed before launch.
+
+## Employee records
+
+`migrations-mariadb/009_employee_management.sql` adds business-scoped employee
+profiles, effective-dated base compensation, and action-only audit events.
+`migrations-mariadb/010_attendance_leave.sql` adds attendance submissions,
+audited corrections and reviews, configurable leave types, leave requests, and
+an append-only leave balance ledger. The current employee, attendance, and leave
+management APIs are restricted to the business owner because the existing
+membership model does not yet provide HR/payroll permissions. Employee records
+are retained by changing employment status; there is no hard delete endpoint.
+This foundation intentionally does not collect identity numbers or bank
+details. Attendance and leave are not automatically converted into earnings.
+Finalised payroll runs can produce private PDF payslips, and employees can use
+a one-time owner invitation to view their own finalised slips. Invitation links
+must be shared securely and expire after seven days. Owners can record payments
+that were made externally; the application does not initiate transfers. Do not
+treat these features as a complete statutory payroll or SARS reporting system.
+
+`migrations-mariadb/011_payroll_statutory_rules.sql` adds effective-dated,
+business-specific PAYE bands, rebates, UIF parameters, and SDL parameters. No
+rates or tax tables are preloaded: an owner must supply and review each schedule
+against current official guidance before it can be used. The application does
+not submit information to SARS.
+
+`migrations-mariadb/012_payroll_runs.sql` adds monthly draft runs, immutable
+employee calculation snapshots, and owner approval/finalization audit events.
+Gross pay and other deductions are explicitly entered by the owner; configured
+PAYE bands, UIF values, and the SDL threshold are applied as an estimate. This
+workflow is not a substitute for a reviewed payroll provider, does not cover
+every employee-specific tax circumstance, and does not submit statutory
+returns. `migrations-mariadb/013_payroll_access_payments.sql` adds individually
+invited employee portal links and idempotent payment records. Payment records
+are manual bookkeeping only and do not verify or initiate a bank transfer.
+Payroll reports and dashboard balances are owner-only, remain separate from
+sales and operating-expense totals, and retain the same estimate and manual
+payment limitations.

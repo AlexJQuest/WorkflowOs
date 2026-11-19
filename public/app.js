@@ -1,4 +1,15 @@
 const app = document.getElementById('app');
+const publicPagePaths = new Set([
+  '/',
+  '/about',
+  '/features',
+  '/solutions',
+  '/pricing',
+  '/contact',
+  '/faq',
+  '/privacy',
+  '/terms',
+]);
 let sessionToken = localStorage.getItem('workflowos_session') || '';
 let sessionInfo = null;
 let dashboardData = null;
@@ -16,22 +27,35 @@ let reportType = 'sales';
 let reportStatusFilter = '';
 let reportEntityFilter = '';
 let payablesFilters = new URLSearchParams();
+let employeePage = 1;
+let employeeSearch = '';
+let employeeStatus = '';
+let leaveEmployeeId = '';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: '▦' },
   { id: 'sales', label: 'Sales & Transactions', icon: '↗' },
+  { id: 'customers', label: 'Customers', icon: '◎' },
+  { id: 'invoices', label: 'Customer Invoices', icon: '▧' },
   { id: 'products', label: 'Products & Services', icon: '◇' },
   { id: 'inventory', label: 'Inventory & Stock', icon: '▤' },
-  { id: 'customers', label: 'Customers', icon: '◎' },
-  { id: 'invoices', label: 'Invoices', icon: '▧' },
   { id: 'payables', label: 'Supplier Invoices', icon: '−' },
   { id: 'documents', label: 'Financial Documents', icon: '▤' },
-  { id: 'loyalty', label: 'Loyalty & Memberships', icon: '✳', planned: true },
   { id: 'expenses', label: 'Expenses', icon: '−' },
-  { id: 'insights', label: 'Business Insights / AI Coach', icon: '✧', planned: true },
+  { id: 'employees', label: 'Employees', icon: '♙', ownerOnly: true },
+  { id: 'attendance', label: 'Attendance', icon: '◷', ownerOnly: true },
+  { id: 'leave', label: 'Leave Management', icon: '▣', ownerOnly: true },
+  { id: 'payroll-rules', label: 'Payroll Rules', icon: '§', ownerOnly: true },
+  { id: 'payroll', label: 'Payroll Runs', icon: '▧', ownerOnly: true },
   { id: 'reports', label: 'Reports', icon: '▥' },
-  { id: 'integrations', label: 'Integrations', icon: '⌘', planned: true },
   { id: 'settings', label: 'Business Settings', icon: '⚙' },
+];
+const navGroups = [
+  { label: 'WORKSPACE', items: ['dashboard'] },
+  { label: 'SALES & CUSTOMERS', items: ['sales', 'customers', 'invoices'] },
+  { label: 'PRODUCTS & OPERATIONS', items: ['products', 'inventory', 'payables'] },
+  { label: 'FINANCE & PEOPLE', items: ['expenses', 'employees', 'attendance', 'leave', 'payroll-rules', 'payroll', 'reports', 'documents'] },
+  { label: 'ADMINISTRATION', items: ['settings'] },
 ];
 
 function escapeHtml(value) {
@@ -109,17 +133,21 @@ function clearSession() {
 
 function goTo(path) {
   history.pushState({}, '', path);
-  if (path === '/login') renderAuth();
+  if (publicPagePaths.has(path)) window.renderPublicSite(path);
+  else if (path === '/login' || path === '/signup') renderAuth('', path === '/signup' ? 'register' : 'login');
   else loadAuthenticatedApp();
 }
 
 window.addEventListener('popstate', () => {
   if (location.pathname === '/reset-password') renderResetPassword(new URLSearchParams(location.search).get('token') || '');
-  else if (!sessionToken || location.pathname === '/login') renderAuth();
+  else if (publicPagePaths.has(location.pathname)) window.renderPublicSite(location.pathname);
+  else if (!sessionToken || location.pathname === '/login' || location.pathname === '/signup') {
+    renderAuth('', location.pathname === '/signup' ? 'register' : 'login');
+  }
   else loadAuthenticatedApp();
 });
 
-function renderAuth(message = '') {
+function renderAuth(message = '', initialTab = 'login') {
   app.innerHTML = `
     <main class="auth-layout">
       <section class="auth-story">
@@ -136,7 +164,7 @@ function renderAuth(message = '') {
           <div class="auth-tabs" role="tablist"><button class="auth-tab active" id="show-login" type="button">Sign in</button><button class="auth-tab" id="show-register" type="button">Create account</button></div>
           <div id="auth-panel"></div>
           <p class="message ${message ? 'error' : ''}" id="auth-message">${escapeHtml(message)}</p>
-          <p class="auth-legal">By continuing, you agree to our terms and privacy notice.</p>
+          <p class="auth-legal">By continuing, you agree to our <a href="/terms">terms</a> and acknowledge our <a href="/privacy">privacy information</a>.</p>
         </div>
         <div class="auth-mobile-brand"><span class="brand-mark">W</span> workflow<span class="brand-accent">OS</span></div>
       </section>
@@ -147,6 +175,7 @@ function renderAuth(message = '') {
   const registerTab = document.getElementById('show-register');
 
   function showLogin() {
+    document.title = 'Log in | WorkflowOS';
     loginTab.classList.add('active');
     registerTab.classList.remove('active');
     panel.innerHTML = `
@@ -162,6 +191,7 @@ function renderAuth(message = '') {
   }
 
   function showRegister() {
+    document.title = 'Get started | WorkflowOS';
     registerTab.classList.add('active');
     loginTab.classList.remove('active');
     panel.innerHTML = `
@@ -180,7 +210,8 @@ function renderAuth(message = '') {
 
   loginTab.addEventListener('click', showLogin);
   registerTab.addEventListener('click', showRegister);
-  showLogin();
+  if (initialTab === 'register') showRegister();
+  else showLogin();
 }
 
 
@@ -333,7 +364,10 @@ async function loadAuthenticatedApp() {
     if (!sessionInfo.business) throw new Error('No business is assigned to this account.');
     if (location.pathname !== '/dashboard' && location.pathname !== '/') history.replaceState({}, '', '/dashboard');
     if (location.pathname === '/') history.replaceState({}, '', '/dashboard');
-    currentView = ['dashboard', 'sales', 'products', 'inventory', 'customers', 'invoices', 'settings'].includes(currentView) ? currentView : 'dashboard';
+    const accessibleViews = navItems
+      .filter((item) => !item.ownerOnly || sessionInfo.business.isOwner)
+      .map((item) => item.id);
+    if (!accessibleViews.includes(currentView)) currentView = 'dashboard';
     renderShell();
     await renderView(currentView);
   } catch (error) {
@@ -354,14 +388,20 @@ function renderShell() {
       <aside class="sidebar" id="sidebar">
         <a class="brand" href="/dashboard"><span class="brand-mark">W</span><span>workflow<span class="brand-accent">OS</span></span></a>
         <div class="business-switcher"><span class="business-avatar">${escapeHtml((business.name || 'B').slice(0, 1).toUpperCase())}</span><span class="business-meta"><strong>${escapeHtml(business.name)}</strong><small>${escapeHtml(business.businessType || 'Business workspace')}</small></span><span class="switch-chevron">⌄</span></div>
-        <p class="nav-caption">WORKSPACE</p>
-        <nav class="side-nav" aria-label="Main navigation">${navItems.map((item) => item.planned
-          ? `<span class="nav-item nav-disabled" title="This module is planned"><span class="nav-icon">${item.icon}</span><span>${item.label}</span><small>SOON</small></span>`
-          : `<button class="nav-item ${item.id === currentView ? 'selected' : ''}" data-view="${item.id}" type="button"><span class="nav-icon">${item.icon}</span><span>${item.label}</span></button>`).join('')}</nav>
+        <nav class="side-nav" aria-label="Main navigation">${navGroups.map((group) => {
+          const items = group.items
+            .map((id) => navItems.find((item) => item.id === id))
+            .filter((item) => item && (!item.ownerOnly || business.isOwner));
+          if (!items.length) return '';
+          return `<section class="nav-group"><p class="nav-caption">${group.label}</p>${items.map((item) =>
+            `<button class="nav-item ${item.id === currentView ? 'selected' : ''}" data-view="${item.id}" type="button" ${item.id === currentView ? 'aria-current="page"' : ''}><span class="nav-icon" aria-hidden="true">${item.icon}</span><span>${item.label}</span></button>`
+          ).join('')}</section>`;
+        }).join('')}</nav>
         <div class="sidebar-bottom"><div class="sidebar-help"><span class="help-icon">?</span><span><strong>Need a hand?</strong><small>Help & support</small></span><span>↗</span></div><div class="sidebar-version">WORKFLOWOS · LOCAL PREVIEW</div></div>
       </aside>
+      <button class="sidebar-backdrop hidden" id="sidebar-backdrop" type="button" aria-label="Close navigation"></button>
       <main class="main-area">
-        <header class="topbar"><button class="icon-button menu-button" id="menu-toggle" aria-label="Toggle navigation">☰</button><div class="breadcrumbs"><span>Workspace</span><span class="breadcrumb-slash">/</span><strong id="topbar-title">Dashboard</strong></div><div class="topbar-actions"><button class="icon-button" id="refresh-button" aria-label="Refresh data" title="Refresh">↻</button><div class="profile"><span class="profile-avatar">${escapeHtml(initials)}</span><span class="profile-copy"><strong>${escapeHtml(user.firstName ? `${user.firstName} ${user.lastName || ''}` : user.email || 'Business admin')}</strong><small>Business admin</small></span><button class="profile-menu" id="profile-menu" aria-label="Account menu">⌄</button><div class="profile-dropdown hidden" id="profile-dropdown"><span>${escapeHtml(user.email || '')}</span><button id="logout-button" type="button">Sign out</button></div></div></div></header>
+        <header class="topbar"><button class="icon-button menu-button" id="menu-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button><div class="breadcrumbs"><span>Workspace</span><span class="breadcrumb-slash">/</span><strong id="topbar-title">Dashboard</strong></div><div class="topbar-actions"><button class="icon-button" id="refresh-button" aria-label="Refresh data" title="Refresh">↻</button><div class="profile"><span class="profile-avatar">${escapeHtml(initials)}</span><span class="profile-copy"><strong>${escapeHtml(user.firstName ? `${user.firstName} ${user.lastName || ''}` : user.email || 'Business admin')}</strong><small>${business.isOwner ? 'Workspace owner' : 'Team member'}</small></span><button class="profile-menu" id="profile-menu" aria-label="Account menu">⌄</button><div class="profile-dropdown hidden" id="profile-dropdown"><span>${escapeHtml(user.email || '')}</span><button id="logout-button" type="button">Sign out</button></div></div></div></header>
         <div class="page-content" id="page-content"><div class="loading-panel"><span class="spinner"></span>Loading your workspace…</div></div>
       </main>
     </div>`;
@@ -371,7 +411,26 @@ function renderShell() {
     renderShell();
     renderView(currentView);
   }));
-  document.getElementById('menu-toggle').addEventListener('click', () => document.getElementById('sidebar').classList.toggle('sidebar-open'));
+  document.getElementById('menu-toggle').addEventListener('click', (event) => {
+    const isOpen = document.getElementById('sidebar').classList.toggle('sidebar-open');
+    document.getElementById('sidebar-backdrop').classList.toggle('hidden', !isOpen);
+    event.currentTarget.setAttribute('aria-expanded', String(isOpen));
+  });
+  document.getElementById('sidebar-backdrop').addEventListener('click', () => {
+    document.getElementById('sidebar').classList.remove('sidebar-open');
+    document.getElementById('sidebar-backdrop').classList.add('hidden');
+    document.getElementById('menu-toggle').setAttribute('aria-expanded', 'false');
+    document.getElementById('menu-toggle').focus();
+  });
+  document.onkeydown = (event) => {
+    if (event.key !== 'Escape') return;
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar?.classList.contains('sidebar-open')) return;
+    sidebar.classList.remove('sidebar-open');
+    document.getElementById('sidebar-backdrop').classList.add('hidden');
+    document.getElementById('menu-toggle').setAttribute('aria-expanded', 'false');
+    document.getElementById('menu-toggle').focus();
+  };
   document.getElementById('profile-menu').addEventListener('click', () => document.getElementById('profile-dropdown').classList.toggle('hidden'));
   document.getElementById('logout-button').addEventListener('click', async () => {
     try { await api('/api/logout', { method: 'POST' }); } catch { /* clear local session even if offline */ }
@@ -403,6 +462,11 @@ async function renderView(view) {
     if (view === 'sales') return await renderSales(content);
     if (view === 'expenses') return await renderExpenses(content);
     if (view === 'reports') return await renderReports(content);
+    if (view === 'employees') return await renderEmployees(content);
+    if (view === 'attendance') return await renderAttendance(content);
+    if (view === 'leave') return await renderLeave(content);
+    if (view === 'payroll-rules') return await renderPayrollRules(content);
+    if (view === 'payroll') return await renderPayrollRuns(content);
     if (view === 'settings') return await renderSettings(content);
     content.innerHTML = '<div class="empty-state"><h2>Module not available</h2><p>This area is not included in the current local prototype.</p></div>';
   } catch (error) {
@@ -456,9 +520,11 @@ async function renderDashboard(content) {
       ${kpiCard('↗', 'Customer payments this month', money(financial.receivables.paymentsThisMonthCents, currency), `${money(financial.receivables.paymentsTodayCents, currency)} received today`, '', 'icon-green')}
       ${kpiCard('−', 'Supplier invoices outstanding', money(financial.payables.outstandingCents, currency), `${money(financial.payables.overdueCents, currency)} overdue · ${financial.payables.overdueCount} invoices`, '<button class="text-link" data-view="expenses">Review payables →</button>', 'icon-red')}
       ${kpiCard('⌁', 'Supplier payments this month', money(financial.payables.paymentsThisMonthCents, currency), `${financial.payables.dueWithinWeek} invoices due within 7 days`, '', 'icon-amber')}
+      ${financial.payroll ? `${kpiCard('≋', 'Finalised net pay this month', money(financial.payroll.finalisedNetPayThisMonthCents, currency), 'Estimate based on finalised payroll runs', '<button class="text-link" data-view="payroll">Review payroll →</button>', 'icon-violet')}
+      ${kpiCard('−', 'Payroll payments outstanding', money(financial.payroll.outstandingCents, currency), `${money(financial.payroll.paymentsThisMonthCents, currency)} manually recorded this month`, 'Transfers are made outside WorkflowOS', 'icon-amber')}` : ''}
     </section>
-    <section class="panel report-panel"><div class="panel-heading"><div><h2>Financial action centre</h2><p>Items requiring follow-up across invoices and stock receipts</p></div><button class="text-link" data-view="reports">Open financial reports →</button></div>
-      ${financial.actionItems.length ? `<div class="best-list">${financial.actionItems.map((item) => `<div class="best-row"><span class="product-initial">${item.type === 'customer_invoice_overdue' ? '!' : item.type === 'supplier_invoice_due' ? '−' : '▤'}</span><span class="best-product"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}${item.amountCents === undefined ? '' : ` · ${money(item.amountCents, currency)}`}</small></span><button class="text-link" data-view="${escapeHtml(item.view)}">Review →</button></div>`).join('')}</div>` : '<div class="mini-empty">No overdue invoices, near-term supplier payments, or outstanding deliveries.</div>'}
+    <section class="panel report-panel"><div class="panel-heading"><div><h2>Financial action centre</h2><p>Items requiring follow-up across invoices, payroll and stock receipts</p></div><button class="text-link" data-view="reports">Open financial reports →</button></div>
+      ${financial.actionItems.length ? `<div class="best-list">${financial.actionItems.map((item) => `<div class="best-row"><span class="product-initial">${item.type === 'customer_invoice_overdue' ? '!' : item.type === 'supplier_invoice_due' ? '−' : item.type === 'payroll_payment_outstanding' ? '≋' : '▤'}</span><span class="best-product"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}${item.amountCents === undefined ? '' : ` · ${money(item.amountCents, currency)}`}</small></span><button class="text-link" data-view="${escapeHtml(item.view)}">Review →</button></div>`).join('')}</div>` : '<div class="mini-empty">No outstanding invoice, payroll or stock-receipt follow-ups.</div>'}
     </section>
     <section class="dashboard-grid primary-grid">
       <article class="panel chart-panel"><div class="panel-heading"><div><h2>Revenue performance</h2><p>Completed sales · ${escapeHtml(currency)}</p></div><div class="chart-controls"><select id="period-select" aria-label="Reporting period">${periodOptions.map(([value, label]) => `<option value="${value}" ${currentPeriod === value ? 'selected' : ''}>${label}</option>`).join('')}</select><select id="granularity-select" aria-label="Chart interval"><option value="daily" ${currentGranularity === 'daily' ? 'selected' : ''}>Daily</option><option value="weekly" ${currentGranularity === 'weekly' ? 'selected' : ''}>Weekly</option><option value="monthly" ${currentGranularity === 'monthly' ? 'selected' : ''}>Monthly</option></select></div></div>
@@ -1376,6 +1442,848 @@ async function renderFinancialDocuments(content) {
   dialog.addEventListener('close', () => dialog.remove(), { once: true });
 }
 
+async function renderEmployees(content) {
+  const query = new URLSearchParams({
+    page: String(employeePage),
+    pageSize: '20',
+    ...(employeeSearch ? { search: employeeSearch } : {}),
+    ...(employeeStatus ? { status: employeeStatus } : {}),
+  });
+  const list = await api(`/api/employees?${query}`);
+  const currency = sessionInfo.business.currency || 'ZAR';
+  const payLabels = {
+    monthly_salary: 'Monthly salary',
+    hourly: 'Hourly',
+    weekly: 'Weekly wage',
+    fortnightly: 'Fortnightly wage',
+    daily: 'Daily wage',
+  };
+  const compensationForm = (employee) => `
+    <dialog class="expense-dialog" id="employee-compensation-dialog">
+      <form method="dialog" class="dialog-close"><button class="icon-button" aria-label="Close">×</button></form>
+      <h2>Change compensation</h2>
+    <p class="form-help">Changes are effective-dated. Payroll drafts still require owner-entered gross pay.</p>
+      <form id="employee-compensation-form" class="record-form">
+        <label>Pay structure<select name="payStructure" required><option value="monthly_salary">Monthly salary</option><option value="hourly">Hourly</option><option value="weekly">Weekly wage</option><option value="fortnightly">Fortnightly wage</option><option value="daily">Daily wage</option></select></label>
+        <label>Pay frequency<select name="payFrequency" required><option value="monthly">Monthly</option><option value="fortnightly">Fortnightly</option><option value="weekly">Weekly</option></select></label>
+        <label>Rate in ${escapeHtml(currency)}<input name="baseRate" type="number" min="0.01" step="0.01" required /></label>
+        <label>Hours per week (optional)<input name="hoursPerWeek" type="number" min="0.1" max="168" step="0.1" /></label>
+        <label>Effective from<input name="effectiveFrom" type="date" value="${new Date().toISOString().slice(0, 10)}" required /></label>
+        <button class="button button-primary" type="submit">Save compensation</button>
+      </form>
+    </dialog>`;
+
+  content.innerHTML = `
+    <section class="page-heading"><div><span class="eyebrow">FINANCE & PEOPLE</span><h1>Employees</h1><p>Manage employee records, effective-dated base pay, and invitations to private payslip access.</p></div><div class="heading-actions"><button class="button button-primary" id="employee-add">＋ Add employee</button></div></section>
+    <section class="panel list-panel">
+      <form id="employee-filters" class="expense-filters">
+        <label>Search<input name="search" value="${escapeHtml(employeeSearch)}" placeholder="Name, employee number or department" /></label>
+        <label>Status<select name="status"><option value="">All statuses</option>${[['active','Active'],['on_leave','On leave'],['suspended','Suspended'],['terminated','Terminated'],['archived','Archived']].map(([value,label]) => `<option value="${value}" ${employeeStatus === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+        <button class="button button-secondary" type="submit">Apply filters</button>
+      </form>
+      <form id="employee-form" class="record-form employee-form hidden">
+        <h2 id="employee-form-title">Add employee</h2>
+        <input type="hidden" name="employeeId" />
+        <label>Employee number<input name="employeeNumber" maxlength="40" required /></label>
+        <label>First name<input name="firstName" maxlength="100" required /></label>
+        <label>Last name<input name="lastName" maxlength="100" required /></label>
+        <label>Email<input name="email" type="email" maxlength="191" /></label>
+        <label>Phone<input name="phone" type="tel" maxlength="50" /></label>
+        <label>Job title<input name="jobTitle" maxlength="191" required /></label>
+        <label>Department<input name="department" maxlength="100" /></label>
+        <label>Employment type<select name="employmentType" required><option value="permanent">Permanent</option><option value="fixed_term">Fixed term</option><option value="casual">Casual</option><option value="contractor">Contractor</option><option value="intern">Intern</option></select></label>
+        <label>Employment status<select name="employmentStatus"><option value="active">Active</option><option value="on_leave">On leave</option><option value="suspended">Suspended</option><option value="terminated">Terminated</option><option value="archived">Archived</option></select></label>
+        <label>Start date<input name="employmentStartDate" type="date" required /></label>
+        <label>End date<input name="employmentEndDate" type="date" /></label>
+        <label>Contract type<input name="contractType" maxlength="100" /></label>
+        <label>Work location<input name="workLocation" maxlength="191" /></label>
+        <label class="span-two">Residential address<textarea name="residentialAddress" maxlength="2000" rows="2"></textarea></label>
+        <label>Emergency contact<input name="emergencyContactName" maxlength="191" /></label>
+        <label>Emergency contact phone<input name="emergencyContactPhone" type="tel" maxlength="50" /></label>
+        <fieldset id="employee-initial-compensation" class="span-two employee-compensation-fields">
+          <legend>Initial base pay (private to the business owner)</legend>
+          <div class="record-form">
+            <label>Pay structure<select name="payStructure"><option value="monthly_salary">Monthly salary</option><option value="hourly">Hourly</option><option value="weekly">Weekly wage</option><option value="fortnightly">Fortnightly wage</option><option value="daily">Daily wage</option></select></label>
+            <label>Pay frequency<select name="payFrequency"><option value="monthly">Monthly</option><option value="fortnightly">Fortnightly</option><option value="weekly">Weekly</option></select></label>
+            <label>Rate in ${escapeHtml(currency)}<input name="baseRate" type="number" min="0.01" step="0.01" /></label>
+            <label>Hours per week (optional)<input name="hoursPerWeek" type="number" min="0.1" max="168" step="0.1" /></label>
+            <label>Effective from<input name="effectiveFrom" type="date" value="${new Date().toISOString().slice(0, 10)}" /></label>
+          </div>
+        </fieldset>
+        <div class="employee-form-actions span-two"><button class="button button-primary" type="submit">Save employee</button><button class="button button-secondary" id="employee-cancel" type="button">Cancel</button><span class="form-help" id="employee-form-feedback" role="status"></span></div>
+      </form>
+      ${list.employees.length ? `<div class="table-scroll"><table><thead><tr><th>Employee</th><th>Role / department</th><th>Employment</th><th>Base pay record</th><th>Actions</th></tr></thead><tbody>${list.employees.map((employee) => `<tr><td><strong>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><small>${escapeHtml(employee.employee_number)}${employee.email ? ` · ${escapeHtml(employee.email)}` : ''}</small></td><td>${escapeHtml(employee.job_title)}<small>${escapeHtml(employee.department || 'No department')}</small></td><td><span class="status-pill status-${employee.employment_status === 'active' ? 'completed' : 'cancelled'}">${escapeHtml(employee.employment_status.replace('_', ' '))}</span><small>${escapeHtml(employee.employment_type)} · since ${escapeHtml(employee.employment_start_date)}</small></td><td>${employee.base_rate_cents === null ? 'No current rate' : `${money(employee.base_rate_cents, employee.compensation_currency)} · ${escapeHtml(payLabels[employee.pay_structure] || employee.pay_structure)} / ${escapeHtml(employee.pay_frequency)}`}<small>${employee.compensation_effective_from ? `Effective ${escapeHtml(employee.compensation_effective_from)}` : ''}</small></td><td><div class="invoice-row-actions"><button class="text-link employee-edit" data-id="${employee.id}" type="button">Edit details</button><button class="text-link employee-compensation" data-id="${employee.id}" type="button">Change pay</button>${employee.portal_user_id ? `<button class="text-link employee-portal-revoke" data-id="${employee.id}" type="button">Revoke portal</button>` : employee.email ? `<button class="text-link employee-portal-invite" data-id="${employee.id}" type="button">Invite to portal</button>` : ''}</div></td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No employees found</strong><span>Add an employee or change the search filters.</span></div>'}
+      <div class="expense-pagination"><button class="button button-secondary" id="employee-prev" ${list.page <= 1 ? 'disabled' : ''}>Previous</button><span>Page ${list.page} of ${Math.max(1, Math.ceil(list.total / list.pageSize))}</span><button class="button button-secondary" id="employee-next" ${list.page * list.pageSize >= list.total ? 'disabled' : ''}>Next</button></div>
+    </section>
+    <p class="form-help">Employee, attendance, leave, and payroll administration is restricted to the business owner. Identity numbers and bank details are intentionally not collected. Payslip access is limited to finalised runs and individually invited employees; configured payroll figures remain estimates.</p>
+    ${compensationForm()}`;
+
+  const form = document.getElementById('employee-form');
+  content.querySelectorAll('.employee-portal-invite').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        const { invitation } = await api(`/api/employees/${button.dataset.id}/portal-invitation`, {
+          method: 'POST',
+        });
+        const url = new URL('/employee-portal', window.location.origin);
+        url.searchParams.set('token', invitation.invitationToken);
+        const message = `Share this one-time link securely. It expires in seven days:\n\n${url.href}`;
+        try {
+          await navigator.clipboard.writeText(url.href);
+          alert('Employee portal invitation copied. Share it directly with the employee; it expires in seven days.');
+        } catch {
+          window.prompt(message, url.href);
+        }
+        await renderEmployees(content);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+  });
+  content.querySelectorAll('.employee-portal-revoke').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Revoke this employee’s portal access? Their current sign-in will no longer show payslips.')) return;
+      try {
+        await api(`/api/employees/${button.dataset.id}/portal-access`, { method: 'DELETE' });
+        await renderEmployees(content);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+  });
+  document.getElementById('employee-add').addEventListener('click', () => {
+    form.reset();
+    form.elements.employeeId.value = '';
+    document.getElementById('employee-form-title').textContent = 'Add employee';
+    document.getElementById('employee-initial-compensation').classList.remove('hidden');
+    form.classList.remove('hidden');
+    form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    form.elements.employeeNumber.focus();
+  });
+  document.getElementById('employee-cancel').addEventListener('click', () => form.classList.add('hidden'));
+  document.getElementById('employee-filters').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    employeeSearch = String(values.get('search') || '').trim();
+    employeeStatus = String(values.get('status') || '');
+    employeePage = 1;
+    renderEmployees(content);
+  });
+  document.getElementById('employee-prev').addEventListener('click', () => {
+    employeePage = Math.max(1, employeePage - 1);
+    renderEmployees(content);
+  });
+  document.getElementById('employee-next').addEventListener('click', () => {
+    employeePage += 1;
+    renderEmployees(content);
+  });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(form).entries());
+    const employeeId = values.employeeId;
+    const payload = {
+      employeeNumber: values.employeeNumber,
+      firstName: values.firstName,
+      lastName: values.lastName,
+      email: values.email || null,
+      phone: values.phone || null,
+      jobTitle: values.jobTitle,
+      department: values.department || null,
+      employmentType: values.employmentType,
+      employmentStatus: values.employmentStatus,
+      employmentStartDate: values.employmentStartDate,
+      employmentEndDate: values.employmentEndDate || null,
+      contractType: values.contractType || null,
+      workLocation: values.workLocation || null,
+      residentialAddress: values.residentialAddress || null,
+      emergencyContactName: values.emergencyContactName || null,
+      emergencyContactPhone: values.emergencyContactPhone || null,
+    };
+    const feedback = document.getElementById('employee-form-feedback');
+    try {
+      if (employeeId) {
+        await api(`/api/employees/${employeeId}`, { method: 'PUT', body: JSON.stringify(payload) });
+      } else {
+        const baseRateCents = Math.round(Number(values.baseRate) * 100);
+        const hoursPerWeekMillis = values.hoursPerWeek
+          ? Math.round(Number(values.hoursPerWeek) * 1000)
+          : null;
+        await api('/api/employees', {
+          method: 'POST',
+          body: JSON.stringify({
+            ...payload,
+            payStructure: values.payStructure,
+            payFrequency: values.payFrequency,
+            baseRateCents,
+            hoursPerWeekMillis,
+            currency,
+            effectiveFrom: values.effectiveFrom,
+          }),
+        });
+      }
+      await renderEmployees(content);
+    } catch (error) {
+      feedback.textContent = error.message;
+      feedback.className = 'form-help error';
+    }
+  });
+  content.querySelectorAll('.employee-edit').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      const { employee } = await api(`/api/employees/${button.dataset.id}`);
+      form.reset();
+      form.elements.employeeId.value = employee.id;
+      document.getElementById('employee-form-title').textContent = `Edit ${employee.first_name} ${employee.last_name}`;
+      document.getElementById('employee-initial-compensation').classList.add('hidden');
+      const fields = {
+        employeeNumber: 'employee_number',
+        firstName: 'first_name',
+        lastName: 'last_name',
+        email: 'email',
+        phone: 'phone',
+        jobTitle: 'job_title',
+        department: 'department',
+        employmentType: 'employment_type',
+        employmentStatus: 'employment_status',
+        employmentStartDate: 'employment_start_date',
+        employmentEndDate: 'employment_end_date',
+        contractType: 'contract_type',
+        workLocation: 'work_location',
+        residentialAddress: 'residential_address',
+        emergencyContactName: 'emergency_contact_name',
+        emergencyContactPhone: 'emergency_contact_phone',
+      };
+      for (const [field, key] of Object.entries(fields)) {
+        form.elements[field].value = employee[key] || '';
+      }
+      form.classList.remove('hidden');
+      form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      form.elements.firstName.focus();
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  const compensationDialog = document.getElementById('employee-compensation-dialog');
+  content.querySelectorAll('.employee-compensation').forEach((button) => button.addEventListener('click', () => {
+    compensationDialog.dataset.employeeId = button.dataset.id;
+    compensationDialog.showModal();
+  }));
+  document.getElementById('employee-compensation-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    try {
+      await api(`/api/employees/${compensationDialog.dataset.employeeId}/compensation`, {
+        method: 'POST',
+        body: JSON.stringify({
+          payStructure: values.payStructure,
+          payFrequency: values.payFrequency,
+          baseRateCents: Math.round(Number(values.baseRate) * 100),
+          hoursPerWeekMillis: values.hoursPerWeek ? Math.round(Number(values.hoursPerWeek) * 1000) : null,
+          currency,
+          effectiveFrom: values.effectiveFrom,
+        }),
+      });
+      compensationDialog.close();
+      await renderEmployees(content);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+}
+
+async function renderAttendance(content) {
+  const [employeeResult, attendanceResult] = await Promise.all([
+    api('/api/employees?status=active&page=1&pageSize=100'),
+    api('/api/attendance?page=1&pageSize=50'),
+  ]);
+  const employees = employeeResult.employees || [];
+  const records = attendanceResult.records || [];
+  const employeeOptions = employees.map((employee) =>
+    `<option value="${employee.id}">${escapeHtml(employee.employee_number)} · ${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</option>`
+  ).join('');
+  const minutes = (value) => `${(Number(value || 0) / 60).toFixed(2)} h`;
+  const statusLabel = (value) => escapeHtml(String(value || '').replace('_', ' '));
+
+  content.innerHTML = `
+    <section class="page-heading"><div><span class="eyebrow">FINANCE & PEOPLE</span><h1>Attendance</h1><p>Submit time records, review them, and preserve a reasoned correction history.</p></div></section>
+    <section class="panel form-panel"><h2>Submit attendance</h2>
+      ${employees.length ? `<form id="attendance-form" class="record-form">
+        <label>Employee<select name="employeeId" required>${employeeOptions}</select></label>
+        <label>Work date<input name="workDate" type="date" value="${new Date().toISOString().slice(0, 10)}" required /></label>
+        <label>Ordinary hours<input name="ordinaryHours" type="number" min="0" max="24" step="0.01" value="0" required /></label>
+        <label>Overtime hours<input name="overtimeHours" type="number" min="0" max="24" step="0.01" value="0" required /></label>
+        <label>Sunday hours<input name="sundayHours" type="number" min="0" max="24" step="0.01" value="0" required /></label>
+        <label>Public-holiday hours<input name="publicHolidayHours" type="number" min="0" max="24" step="0.01" value="0" required /></label>
+        <label>Break hours<input name="breakHours" type="number" min="0" max="24" step="0.01" value="0" required /></label>
+        <label>Absence hours<input name="absenceHours" type="number" min="0" max="24" step="0.01" value="0" required /></label>
+        <label class="span-two">Notes<textarea name="notes" maxlength="1000" rows="2"></textarea></label>
+        <button class="button button-primary" type="submit">Submit for review</button>
+        <span class="inline-feedback" id="attendance-feedback" role="status"></span>
+      </form>` : '<div class="table-empty"><strong>No active employees</strong><span>Add an active employee before submitting attendance.</span></div>'}
+    </section>
+    <section class="panel list-panel">
+      <div class="panel-heading"><div><h2>Recent attendance</h2><p>${attendanceResult.total || 0} matching record(s) · hours are converted to minutes for storage</p></div></div>
+      ${records.length ? `<div class="table-scroll"><table><thead><tr><th>Date / employee</th><th>Ordinary</th><th>Overtime</th><th>Sunday</th><th>Public holiday</th><th>Break / absence</th><th>Status / actions</th></tr></thead><tbody>${records.map((record) => `
+        <tr>
+          <td><strong>${escapeHtml(String(record.work_date).slice(0, 10))}</strong><small>${escapeHtml(record.first_name)} ${escapeHtml(record.last_name)} · ${escapeHtml(record.employee_number)}</small></td>
+          <td>${minutes(record.ordinary_minutes)}</td><td>${minutes(record.overtime_minutes)}</td><td>${minutes(record.sunday_minutes)}</td><td>${minutes(record.public_holiday_minutes)}</td>
+          <td>${minutes(record.break_minutes)} break<small>${minutes(record.absence_minutes)} absent</small></td>
+          <td><span class="status-pill status-${record.status === 'approved' ? 'completed' : record.status === 'rejected' ? 'cancelled' : 'pending'}">${statusLabel(record.status)}</span>
+            ${record.status === 'submitted' ? `<details class="workflow-details"><summary>Review</summary><form class="attendance-review-form" data-id="${record.id}">
+              <label>Review note<textarea name="comment" maxlength="1000" rows="2" placeholder="Required when rejecting"></textarea></label>
+              <div class="workflow-actions"><button class="button button-primary" type="button" data-decision="approved">Approve</button><button class="button button-secondary" type="button" data-decision="rejected">Reject</button></div>
+              <span class="inline-feedback" role="status"></span>
+            </form></details>` : ''}
+            ${record.status !== 'approved' ? `<details class="workflow-details"><summary>Correct record</summary><form class="attendance-adjustment-form" data-id="${record.id}">
+              <label>Field<select name="fieldName"><option value="ordinary_minutes">Ordinary hours</option><option value="overtime_minutes">Overtime hours</option><option value="sunday_minutes">Sunday hours</option><option value="public_holiday_minutes">Public-holiday hours</option><option value="break_minutes">Break hours</option><option value="absence_minutes">Absence hours</option></select></label>
+              <label>Corrected hours<input name="hours" type="number" min="0" max="24" step="0.01" required /></label>
+              <label>Reason<input name="reason" maxlength="1000" required /></label><button class="button button-secondary" type="submit">Save correction</button>
+              <span class="inline-feedback" role="status"></span>
+            </form></details>` : ''}
+          </td>
+        </tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No attendance records yet</strong><span>Submitted records will appear here for owner review.</span></div>'}
+    </section>
+    <p class="form-help">Attendance management is restricted to the business owner. Approved records are immutable; use an audited correction before approval. This module does not calculate wages or statutory overtime.</p>`;
+
+  document.getElementById('attendance-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    const toMinutes = (hours) => Math.round(Number(hours || 0) * 60);
+    try {
+      await api('/api/attendance', {
+        method: 'POST',
+        body: JSON.stringify({
+          employeeId: Number(values.employeeId),
+          workDate: values.workDate,
+          ordinaryMinutes: toMinutes(values.ordinaryHours),
+          overtimeMinutes: toMinutes(values.overtimeHours),
+          sundayMinutes: toMinutes(values.sundayHours),
+          publicHolidayMinutes: toMinutes(values.publicHolidayHours),
+          breakMinutes: toMinutes(values.breakHours),
+          absenceMinutes: toMinutes(values.absenceHours),
+          notes: values.notes,
+          idempotencyKey: `attendance-${crypto.randomUUID()}`,
+        }),
+      });
+      await renderAttendance(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+    }
+  });
+  content.querySelectorAll('.attendance-review-form button[data-decision]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const form = button.closest('form');
+      const comment = new FormData(form).get('comment');
+      const feedback = form.querySelector('.inline-feedback');
+      if (button.dataset.decision === 'rejected' && !String(comment || '').trim()) {
+        feedback.textContent = 'Add a review note before rejecting this record.';
+        feedback.className = 'inline-feedback error';
+        return;
+      }
+      try {
+        await api(`/api/attendance/${form.dataset.id}/review`, {
+          method: 'POST',
+          body: JSON.stringify({ decision: button.dataset.decision, comment }),
+        });
+        await renderAttendance(content);
+      } catch (error) {
+        feedback.textContent = error.message;
+        feedback.className = 'inline-feedback error';
+      }
+    });
+  });
+  content.querySelectorAll('.attendance-adjustment-form').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const values = Object.fromEntries(new FormData(form).entries());
+      try {
+        await api(`/api/attendance/${form.dataset.id}/adjustments`, {
+          method: 'POST',
+          body: JSON.stringify({
+            fieldName: values.fieldName,
+            adjustedMinutes: Math.round(Number(values.hours) * 60),
+            reason: values.reason,
+          }),
+        });
+        await renderAttendance(content);
+      } catch (error) {
+        showInlineError(form, error.message);
+      }
+    });
+  });
+}
+
+async function renderLeave(content) {
+  const [employeeResult, typeResult, requestResult] = await Promise.all([
+    api('/api/employees?status=active&page=1&pageSize=100'),
+    api('/api/leave-types'),
+    api('/api/leave-requests'),
+  ]);
+  const employees = employeeResult.employees || [];
+  const leaveTypes = typeResult.leaveTypes || [];
+  const requests = requestResult.leaveRequests || [];
+  const selectedEmployee = employees.find((employee) => String(employee.id) === String(leaveEmployeeId)) || employees[0];
+  if (selectedEmployee) leaveEmployeeId = String(selectedEmployee.id);
+  const balances = selectedEmployee
+    ? (await api(`/api/employees/${selectedEmployee.id}/leave-balances`)).balances
+    : [];
+  const employeeOptions = employees.map((employee) =>
+    `<option value="${employee.id}" ${selectedEmployee && String(employee.id) === String(selectedEmployee.id) ? 'selected' : ''}>${escapeHtml(employee.employee_number)} · ${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</option>`
+  ).join('');
+  const typeOptions = leaveTypes.filter((type) => Boolean(Number(type.is_active))).map((type) =>
+    `<option value="${type.id}">${escapeHtml(type.name)} (${escapeHtml(type.unit)})</option>`
+  ).join('');
+  const amount = (millis) => (Number(millis || 0) / 1000).toFixed(3).replace(/\.?0+$/, '');
+  const statusLabel = (value) => escapeHtml(String(value || '').replace('_', ' '));
+
+  content.innerHTML = `
+    <section class="page-heading"><div><span class="eyebrow">FINANCE & PEOPLE</span><h1>Leave management</h1><p>Configure leave categories, record balances, and review employee requests.</p></div></section>
+    <section class="panel list-panel"><div class="panel-heading"><div><h2>Leave types</h2><p>Business-configured categories and balance rules</p></div></div>
+      ${leaveTypes.length ? `<div class="table-scroll"><table><thead><tr><th>Type</th><th>Unit</th><th>Paid</th><th>Balance required</th><th>Override allowed</th><th>Status</th></tr></thead><tbody>${leaveTypes.map((type) => `<tr><td><strong>${escapeHtml(type.name)}</strong><small>${escapeHtml(type.code)}</small></td><td>${escapeHtml(type.unit)}</td><td>${Number(type.is_paid) ? 'Yes' : 'No'}</td><td>${Number(type.requires_balance) ? 'Yes' : 'No'}</td><td>${Number(type.allow_balance_override) ? 'Yes' : 'No'}</td><td><button class="text-link leave-type-toggle" data-id="${type.id}" data-active="${Number(type.is_active)}" type="button">${Number(type.is_active) ? 'Deactivate' : 'Activate'}</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No leave types configured</strong><span>Add the categories your business uses.</span></div>'}
+      <form id="leave-type-form" class="record-form workflow-form">
+        <label>Code<input name="code" maxlength="40" required /></label><label>Name<input name="name" maxlength="100" required /></label>
+        <label>Unit<select name="unit"><option value="days">Days</option><option value="hours">Hours</option></select></label>
+        <label>Paid<select name="isPaid"><option value="true">Paid</option><option value="false">Unpaid</option></select></label>
+        <label>Require balance<select name="requiresBalance"><option value="true">Yes</option><option value="false">No</option></select></label>
+        <label>Allow override<select name="allowBalanceOverride"><option value="false">No</option><option value="true">Yes, with a reason</option></select></label>
+        <button class="button button-primary" type="submit">Add leave type</button><span class="inline-feedback" id="leave-type-feedback" role="status"></span>
+      </form>
+    </section>
+    <section class="panel list-panel"><div class="panel-heading workflow-panel-heading"><div><h2>Balances</h2><p>Ledger values are stored in thousandths of the selected unit.</p></div>
+      ${employees.length ? `<label class="workflow-employee-select">Employee<select id="leave-employee-select">${employeeOptions}</select></label>` : ''}
+    </div>
+    ${balances.length ? `<div class="table-scroll"><table><thead><tr><th>Leave type</th><th>Unit</th><th>Balance</th><th>Balance required</th></tr></thead><tbody>${balances.map((balance) => `<tr><td>${escapeHtml(balance.name)}</td><td>${escapeHtml(balance.unit)}</td><td><strong>${amount(balance.balance_millis)}</strong></td><td>${Number(balance.requires_balance) ? 'Yes' : 'No'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No balances to display</strong><span>Choose an employee and configure leave types first.</span></div>'}
+    ${employees.length && leaveTypes.length ? `<form id="leave-balance-form" class="record-form workflow-form">
+      <label>Leave type<select name="leaveTypeId" required>${typeOptions}</select></label>
+      <label>Entry type<select name="sourceType"><option value="opening_balance">Opening balance</option><option value="accrual">Accrual</option><option value="adjustment">Adjustment</option><option value="reversal">Reversal</option></select></label>
+      <label>Units (decimals allowed)<input name="units" type="number" step="0.001" required /></label>
+      <label>Reason<input name="reason" maxlength="1000" required /></label>
+      <button class="button button-secondary" type="submit">Add ledger entry</button><span class="inline-feedback" role="status"></span>
+    </form>` : ''}</section>
+    <section class="panel form-panel"><h2>Record leave request</h2>
+      ${employees.length && typeOptions ? `<form id="leave-request-form" class="record-form workflow-form">
+        <label>Employee<select name="employeeId" required>${employeeOptions}</select></label><label>Leave type<select name="leaveTypeId" required>${typeOptions}</select></label>
+        <label>Start date<input name="startDate" type="date" required /></label><label>End date<input name="endDate" type="date" required /></label>
+        <label>Requested units<input name="units" type="number" min="0.001" max="366" step="0.001" required /></label>
+        <label class="span-two">Comment<textarea name="comment" maxlength="1000" rows="2"></textarea></label>
+        <button class="button button-primary" type="submit">Create request</button><span class="inline-feedback" role="status"></span>
+      </form>` : '<div class="table-empty"><strong>Setup needed</strong><span>Add an active employee and leave type to record a request.</span></div>'}
+    </section>
+    <section class="panel list-panel"><div class="panel-heading"><div><h2>Leave requests</h2><p>${requests.length} request(s) · pending requests are listed first</p></div></div>
+      ${requests.length ? `<div class="table-scroll"><table><thead><tr><th>Employee / type</th><th>Dates</th><th>Units</th><th>Status / review</th></tr></thead><tbody>${requests.map((request) => `<tr>
+        <td><strong>${escapeHtml(request.first_name)} ${escapeHtml(request.last_name)}</strong><small>${escapeHtml(request.leave_type_name)} · ${escapeHtml(request.employee_number)}</small></td>
+        <td>${escapeHtml(String(request.start_date).slice(0, 10))} – ${escapeHtml(String(request.end_date).slice(0, 10))}</td><td>${amount(request.requested_units_millis)}</td>
+        <td><span class="status-pill status-${request.status === 'approved' ? 'completed' : request.status === 'rejected' ? 'cancelled' : 'pending'}">${statusLabel(request.status)}</span>
+          ${request.status === 'pending' ? `<details class="workflow-details"><summary>Review</summary><form class="leave-review-form" data-id="${request.id}">
+            <label>Review comment<textarea name="comment" maxlength="1000" rows="2" placeholder="Required when rejecting"></textarea></label>
+            <label>Balance override reason (if needed)<input name="overrideReason" maxlength="1000" /></label>
+            <div class="workflow-actions"><button class="button button-primary" type="button" data-decision="approved">Approve</button><button class="button button-secondary" type="button" data-decision="rejected">Reject</button></div>
+            <span class="inline-feedback" role="status"></span>
+          </form></details>` : ''}
+        </td></tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No leave requests</strong><span>New requests will appear here for review.</span></div>'}
+    </section>
+    <p class="form-help">Leave tools are restricted to the business owner. Opening balances and adjustments require an explanation; the immutable ledger preserves every entry. This is not a payroll accrual or statutory leave calculation.</p>`;
+
+  document.getElementById('leave-employee-select')?.addEventListener('change', (event) => {
+    leaveEmployeeId = event.currentTarget.value;
+    renderLeave(content);
+  });
+  document.getElementById('leave-type-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    try {
+      await api('/api/leave-types', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...values,
+          requiresBalance: values.requiresBalance === 'true',
+          isPaid: values.isPaid === 'true',
+          allowBalanceOverride: values.allowBalanceOverride === 'true',
+        }),
+      });
+      await renderLeave(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+    }
+  });
+  content.querySelectorAll('.leave-type-toggle').forEach((button) => button.addEventListener('click', async () => {
+    try {
+      await api(`/api/leave-types/${button.dataset.id}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ isActive: button.dataset.active !== '1' }),
+      });
+      await renderLeave(content);
+    } catch (error) {
+      alert(error.message);
+    }
+  }));
+  document.getElementById('leave-balance-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    try {
+      await api('/api/leave-balances', {
+        method: 'POST',
+        body: JSON.stringify({
+          employeeId: Number(selectedEmployee.id),
+          leaveTypeId: Number(values.leaveTypeId),
+          sourceType: values.sourceType,
+          unitsMillis: Math.round(Number(values.units) * 1000),
+          idempotencyKey: `leave-balance-${crypto.randomUUID()}`,
+          reason: values.reason,
+        }),
+      });
+      await renderLeave(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+    }
+  });
+  document.getElementById('leave-request-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    try {
+      await api('/api/leave-requests', {
+        method: 'POST',
+        body: JSON.stringify({
+          employeeId: Number(values.employeeId),
+          leaveTypeId: Number(values.leaveTypeId),
+          startDate: values.startDate,
+          endDate: values.endDate,
+          requestedUnitsMillis: Math.round(Number(values.units) * 1000),
+          comment: values.comment,
+        }),
+      });
+      await renderLeave(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+    }
+  });
+  content.querySelectorAll('.leave-review-form button[data-decision]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const form = button.closest('form');
+      const values = Object.fromEntries(new FormData(form).entries());
+      const feedback = form.querySelector('.inline-feedback');
+      if (button.dataset.decision === 'rejected' && !values.comment.trim()) {
+        feedback.textContent = 'Add a review comment before rejecting this request.';
+        feedback.className = 'inline-feedback error';
+        return;
+      }
+      try {
+        await api(`/api/leave-requests/${form.dataset.id}/review`, {
+          method: 'POST',
+          body: JSON.stringify({ ...values, decision: button.dataset.decision }),
+        });
+        await renderLeave(content);
+      } catch (error) {
+        feedback.textContent = error.message;
+        feedback.className = 'inline-feedback error';
+      }
+    });
+  });
+}
+
+async function renderPayrollRules(content) {
+  const { ruleSets } = await api('/api/payroll/rules');
+  const bandsMarkup = (bands) => bands.map((band) =>
+    `<li>${money(band.lower_cents, 'ZAR')} – ${band.upper_cents === null ? 'unbounded' : money(band.upper_cents, 'ZAR')} at ${(Number(band.rate_bps) / 100).toFixed(2)}% · base tax ${money(band.base_tax_cents, 'ZAR')}</li>`
+  ).join('');
+  const bandRow = () => `<div class="payroll-band-row"><label>Upper annual income threshold (ZAR)<input name="upperAmount" type="number" min="0.01" step="0.01" placeholder="Leave blank for the top band" /></label><label>Marginal rate (%)<input name="ratePercent" type="number" min="0" max="100" step="0.01" required /></label><button class="text-link payroll-remove-band" type="button" aria-label="Remove PAYE band">Remove</button></div>`;
+
+  content.innerHTML = `
+    <section class="page-heading"><div><span class="eyebrow">FINANCE & PEOPLE</span><h1>Payroll statutory rules</h1><p>Maintain reviewed, effective-dated PAYE, UIF, and SDL parameters for a ZAR business.</p></div></section>
+    <div class="report-caveats"><strong>Rates are never preloaded.</strong> Enter values from current official guidance and have them reviewed by a qualified payroll professional. This configuration screen does not calculate payroll or submit data to SARS.</div>
+    <section class="panel form-panel"><h2>Add an effective-dated rule set</h2>
+      <form id="payroll-rule-form" class="record-form workflow-form">
+        <label>Schedule label<input name="label" maxlength="100" required placeholder="e.g. Approved 20XX tax-year schedule" /></label>
+        <label>Effective from<input name="effectiveFrom" type="date" required /></label>
+        <label>Effective to (optional)<input name="effectiveTo" type="date" /></label>
+        <label>Annual rebate (ZAR)<input name="annualRebate" type="number" min="0" step="0.01" required /></label>
+        <label>Employee UIF rate (%)<input name="uifEmployeeRate" type="number" min="0" max="100" step="0.01" required /></label>
+        <label>Employer UIF rate (%)<input name="uifEmployerRate" type="number" min="0" max="100" step="0.01" required /></label>
+        <label>Monthly UIF earnings cap (ZAR)<input name="uifMonthlyCap" type="number" min="0.01" step="0.01" required /></label>
+        <label>SDL rate (%)<input name="sdlRate" type="number" min="0" max="100" step="0.01" required /></label>
+        <label>Annual SDL threshold (ZAR)<input name="sdlAnnualThreshold" type="number" min="0" step="0.01" required /></label>
+        <fieldset class="span-two payroll-bands">
+          <legend>Annual PAYE tax bands</legend>
+          <p class="form-help">Add bands in order. Each upper threshold becomes the next lower threshold; leave only the final upper threshold blank. Base tax is derived.</p>
+          <div class="payroll-band-list" id="payroll-band-list">${bandRow()}</div>
+          <button class="button button-secondary" type="button" id="payroll-add-band">Add tax band</button>
+        </fieldset>
+        <button class="button button-primary" type="submit">Save rule set</button>
+        <span class="inline-feedback" role="status"></span>
+      </form>
+    </section>
+    <section class="panel list-panel"><div class="panel-heading"><div><h2>Saved rule sets</h2><p>${ruleSets.length} version(s) · immutable once created</p></div></div>
+      ${ruleSets.length ? `<div class="payroll-rule-list">${ruleSets.map((ruleSet) => `<details class="payroll-rule-card"><summary><strong>${escapeHtml(ruleSet.label)}</strong><span>${escapeHtml(String(ruleSet.effective_from).slice(0, 10))} – ${ruleSet.effective_to ? escapeHtml(String(ruleSet.effective_to).slice(0, 10)) : 'open-ended'}</span></summary>
+        <div class="table-scroll"><table><tbody><tr><th>Annual rebate</th><td>${money(ruleSet.annual_rebate_cents, 'ZAR')}</td><th>Employee UIF</th><td>${(Number(ruleSet.uif_employee_rate_bps) / 100).toFixed(2)}%</td></tr>
+        <tr><th>Employer UIF</th><td>${(Number(ruleSet.uif_employer_rate_bps) / 100).toFixed(2)}%</td><th>Monthly UIF cap</th><td>${money(ruleSet.uif_monthly_cap_cents, 'ZAR')}</td></tr>
+        <tr><th>SDL</th><td>${(Number(ruleSet.sdl_rate_bps) / 100).toFixed(2)}%</td><th>Annual SDL threshold</th><td>${money(ruleSet.sdl_annual_threshold_cents, 'ZAR')}</td></tr></tbody></table></div>
+        <h3>PAYE bands</h3><ol>${bandsMarkup(ruleSet.paye_bands || [])}</ol></details>`).join('')}</div>` : '<div class="table-empty"><strong>No statutory rules configured</strong><span>Payroll cannot be calculated until an owner enters and verifies an effective rule set.</span></div>'}
+    </section>`;
+
+  const bandList = document.getElementById('payroll-band-list');
+  document.getElementById('payroll-add-band').addEventListener('click', () => {
+    const lastRow = bandList.lastElementChild;
+    const previousUpper = lastRow?.querySelector('[name="upperAmount"]').value.trim();
+    if (lastRow && !previousUpper) {
+      showInlineError(document.getElementById('payroll-rule-form'), 'Enter the previous band upper threshold before adding another band.');
+      return;
+    }
+    bandList.insertAdjacentHTML('beforeend', bandRow());
+    bindPayrollBandRemoval();
+  });
+  function bindPayrollBandRemoval() {
+    bandList.querySelectorAll('.payroll-remove-band').forEach((button) => {
+      button.onclick = () => {
+        if (bandList.children.length > 1) button.closest('.payroll-band-row').remove();
+      };
+    });
+  }
+  bindPayrollBandRemoval();
+  document.getElementById('payroll-rule-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    const rows = [...bandList.querySelectorAll('.payroll-band-row')];
+    let lowerCents = 0;
+    const payeBands = [];
+    for (const [index, row] of rows.entries()) {
+      const upperInput = row.querySelector('[name="upperAmount"]').value.trim();
+      const ratePercent = Number(row.querySelector('[name="ratePercent"]').value);
+      const upperCents = upperInput ? Math.round(Number(upperInput) * 100) : null;
+      if ((upperInput && (!Number.isFinite(Number(upperInput)) || upperCents <= lowerCents)) ||
+          !Number.isFinite(ratePercent) || ratePercent < 0 || ratePercent > 100 ||
+          (index < rows.length - 1 && upperCents === null) ||
+          (index === rows.length - 1 && upperCents !== null)) {
+        showInlineError(form, 'Check the PAYE band order, upper thresholds, and rates.');
+        return;
+      }
+      payeBands.push({
+        lowerCents,
+        upperCents,
+        rateBps: Math.round(ratePercent * 100),
+      });
+      if (upperCents !== null) lowerCents = upperCents;
+    }
+    const toCents = (value) => Math.round(Number(value) * 100);
+    try {
+      await api('/api/payroll/rules', {
+        method: 'POST',
+        body: JSON.stringify({
+          label: values.label,
+          effectiveFrom: values.effectiveFrom,
+          effectiveTo: values.effectiveTo || null,
+          annualRebateCents: toCents(values.annualRebate),
+          uifEmployeeRateBps: Math.round(Number(values.uifEmployeeRate) * 100),
+          uifEmployerRateBps: Math.round(Number(values.uifEmployerRate) * 100),
+          uifMonthlyCapCents: toCents(values.uifMonthlyCap),
+          sdlRateBps: Math.round(Number(values.sdlRate) * 100),
+          sdlAnnualThresholdCents: toCents(values.sdlAnnualThreshold),
+          payeBands,
+        }),
+      });
+      await renderPayrollRules(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+    }
+  });
+}
+
+async function renderPayrollRuns(content) {
+  const [employeeResult, runResult, ruleResult] = await Promise.all([
+    api('/api/employees?page=1&pageSize=100'),
+    api('/api/payroll/runs'),
+    api('/api/payroll/rules'),
+  ]);
+  const employees = [...(employeeResult.employees || [])];
+  for (let page = 2; employees.length < employeeResult.total; page += 1) {
+    const nextPage = await api(`/api/employees?page=${page}&pageSize=100`);
+    employees.push(...(nextPage.employees || []));
+  }
+  const runs = runResult.runs || [];
+  const now = new Date();
+  const defaultStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    .toISOString().slice(0, 10);
+  const defaultEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0))
+    .toISOString().slice(0, 10);
+  const dialog = '<dialog class="expense-dialog" id="payroll-run-dialog"></dialog>';
+  const statusLabel = (value) => escapeHtml(String(value || '').replace('_', ' '));
+
+  content.innerHTML = `
+    <section class="page-heading"><div><span class="eyebrow">FINANCE & PEOPLE</span><h1>Payroll runs</h1><p>Create a monthly draft using owner-entered gross pay and reviewed statutory rules.</p></div></section>
+    <div class="report-caveats"><strong>Payroll estimate only.</strong> Approved attendance is not automatically converted to wages. Review every gross-pay input and calculated deduction. Payment records are manual tracking only and do not initiate bank transfers or statutory submissions.</div>
+    <section class="panel form-panel"><h2>Create a monthly draft</h2>
+      ${ruleResult.ruleSets.length ? `<form id="payroll-run-form" class="record-form workflow-form">
+        <label>Period start<input name="periodStart" type="date" value="${defaultStart}" required /></label>
+        <label>Period end<input name="periodEnd" type="date" value="${defaultEnd}" required /></label>
+        <label>Pay date<input name="payDate" type="date" value="${defaultEnd}" required /></label>
+        <div class="span-two table-scroll"><table><thead><tr><th>Employee</th><th>Current base-pay record</th><th>Gross pay (ZAR)</th><th>Other deductions (ZAR)</th></tr></thead><tbody id="payroll-run-lines"></tbody></table></div>
+        <button class="button button-primary" type="submit">Calculate draft</button><span class="inline-feedback" role="status"></span>
+      </form>` : '<div class="table-empty"><strong>Statutory rules required</strong><span>Configure an effective-dated rule set before creating payroll drafts.</span></div>'}
+    </section>
+    <section class="panel list-panel"><div class="panel-heading"><div><h2>Payroll history</h2><p>${runs.length} run(s) · newest periods first</p></div></div>
+      ${runs.length ? `<div class="table-scroll"><table><thead><tr><th>Period / pay date</th><th>Status</th><th>Gross</th><th>PAYE</th><th>Employee UIF</th><th>Employer UIF / SDL</th><th>Net pay</th><th>Paid / outstanding</th><th>Actions</th></tr></thead><tbody>${runs.map((run) => `<tr>
+        <td><strong>${escapeHtml(String(run.period_start).slice(0, 10))} – ${escapeHtml(String(run.period_end).slice(0, 10))}</strong><small>Pay date ${escapeHtml(String(run.pay_date).slice(0, 10))}</small></td>
+        <td><span class="status-pill status-${run.status === 'finalized' ? 'completed' : run.status === 'cancelled' ? 'cancelled' : 'pending'}">${statusLabel(run.status)}</span></td>
+        <td>${money(run.total_gross_cents, 'ZAR')}</td><td>${money(run.total_paye_cents, 'ZAR')}</td><td>${money(run.total_uif_employee_cents, 'ZAR')}</td>
+        <td>${money(run.total_uif_employer_cents, 'ZAR')}<small>${money(run.total_sdl_cents, 'ZAR')} SDL</small></td><td>${money(run.total_net_cents, 'ZAR')}</td>
+        <td>${money(run.total_paid_cents, 'ZAR')}<small>${money(run.total_outstanding_cents, 'ZAR')} outstanding</small></td>
+        <td><div class="product-row-actions"><button class="text-link payroll-run-view" data-id="${run.id}" type="button">View</button>${run.status === 'draft' ? `<button class="text-link payroll-run-transition" data-id="${run.id}" data-decision="approved" type="button">Approve</button><button class="text-link payroll-run-transition" data-id="${run.id}" data-decision="cancelled" type="button">Cancel</button>` : ''}${run.status === 'approved' ? `<button class="text-link payroll-run-transition" data-id="${run.id}" data-decision="finalized" type="button">Finalize</button>` : ''}</div></td>
+      </tr>`).join('')}</tbody></table></div>` : '<div class="table-empty"><strong>No payroll runs</strong><span>Drafts will appear here after you configure rules and enter gross-pay values.</span></div>'}
+    </section>
+    <p class="form-help">Monthly PAYE is estimated from the selected effective rule set using annualized gross pay, the configured rebate and marginal bands. UIF and SDL use the configured rates and caps/threshold. Finalised runs provide downloadable payslips; employees can access theirs after activating an invitation. Payment entries record transfers made elsewhere and do not initiate payments. Employee-specific credits, cumulative tax adjustments, and statutory submissions are not included.</p>
+    ${dialog}`;
+
+  const form = document.getElementById('payroll-run-form');
+  if (!form) return;
+  const linesContainer = document.getElementById('payroll-run-lines');
+  function renderEligibleEmployees(periodStart, periodEnd) {
+    const eligible = employees.filter((employee) =>
+      employee.employment_status !== 'archived' &&
+      employee.employment_start_date <= periodEnd &&
+      (!employee.employment_end_date || employee.employment_end_date >= periodStart)
+    );
+    linesContainer.innerHTML = eligible.map((employee) => {
+      const baseRate = employee.pay_structure === 'monthly_salary' && employee.base_rate_cents !== null
+        ? (Number(employee.base_rate_cents) / 100).toFixed(2)
+        : '';
+      return `<tr><td><strong>${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}</strong><small>${escapeHtml(employee.employee_number)} · ${escapeHtml(employee.employment_status)}</small></td>
+        <td>${employee.base_rate_cents === null ? 'No current rate' : `${money(employee.base_rate_cents, employee.compensation_currency)} · ${escapeHtml(employee.pay_structure || '')}`}</td>
+        <td><input aria-label="Gross pay for ${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}" data-employee-id="${employee.id}" name="gross" type="number" min="0" step="0.01" value="${baseRate}" required /></td>
+        <td><input aria-label="Other deductions for ${escapeHtml(employee.first_name)} ${escapeHtml(employee.last_name)}" data-employee-id="${employee.id}" name="deductions" type="number" min="0" step="0.01" value="0" required /></td></tr>`;
+    }).join('') || '<tr><td colspan="4">No employees are eligible for this period.</td></tr>';
+  }
+  renderEligibleEmployees(defaultStart, defaultEnd);
+  form.elements.periodStart.addEventListener('change', () =>
+    renderEligibleEmployees(form.elements.periodStart.value, form.elements.periodEnd.value));
+  form.elements.periodEnd.addEventListener('change', () =>
+    renderEligibleEmployees(form.elements.periodStart.value, form.elements.periodEnd.value));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(form).entries());
+    const grossInputs = [...linesContainer.querySelectorAll('input[name="gross"]')];
+    const deductionInputs = [...linesContainer.querySelectorAll('input[name="deductions"]')];
+    try {
+      await api('/api/payroll/runs', {
+        method: 'POST',
+        body: JSON.stringify({
+          periodStart: values.periodStart,
+          periodEnd: values.periodEnd,
+          payDate: values.payDate,
+          lines: grossInputs.map((input, index) => ({
+            employeeId: Number(input.dataset.employeeId),
+            grossCents: Math.round(Number(input.value) * 100),
+            otherDeductionsCents: Math.round(Number(deductionInputs[index].value) * 100),
+          })),
+        }),
+      });
+      await renderPayrollRuns(content);
+    } catch (error) {
+      showInlineError(form, error.message);
+    }
+  });
+  content.querySelectorAll('.payroll-run-transition').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        await api(`/api/payroll/runs/${button.dataset.id}/transition`, {
+          method: 'POST',
+          body: JSON.stringify({ decision: button.dataset.decision }),
+        });
+        await renderPayrollRuns(content);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+  });
+  async function showPayrollRun(runId) {
+    const [{ run }, { payments }] = await Promise.all([
+      api(`/api/payroll/runs/${runId}`),
+      api(`/api/payroll/runs/${runId}/payments`),
+    ]);
+    const detailDialog = document.getElementById('payroll-run-dialog');
+    const canPay = run.status === 'finalized';
+    const today = new Date().toISOString().slice(0, 10);
+    detailDialog.innerHTML = `<form method="dialog" class="dialog-close"><button class="icon-button" aria-label="Close">×</button></form>
+      <h2>Payroll ${escapeHtml(String(run.period_start).slice(0, 10))}</h2><p class="form-help">${escapeHtml(run.status)} · rule set #${run.rule_set_id}</p>
+      <div class="table-scroll"><table><thead><tr><th>Employee</th><th>Gross</th><th>PAYE</th><th>UIF</th><th>Other deductions</th><th>Net</th><th>Paid / outstanding</th><th>Documents / payment</th></tr></thead><tbody>${run.lines.map((line) => `<tr>
+        <td>${escapeHtml(line.first_name)} ${escapeHtml(line.last_name)}<small>${escapeHtml(line.employee_number)}</small></td>
+        <td>${money(line.gross_cents, 'ZAR')}</td><td>${money(line.paye_cents, 'ZAR')}</td>
+        <td>${money(line.uif_employee_cents, 'ZAR')}</td><td>${money(line.other_deductions_cents, 'ZAR')}</td>
+        <td>${money(line.net_cents, 'ZAR')}</td>
+        <td>${money(line.paid_cents, 'ZAR')}<small>${money(line.outstanding_cents, 'ZAR')} remaining</small></td>
+        <td>${canPay ? `<button class="text-link payroll-payslip" data-employee-id="${line.employee_id}" type="button">Payslip</button>${line.outstanding_cents > 0 ? `<button class="text-link payroll-line-payment" data-employee-id="${line.employee_id}" data-outstanding="${line.outstanding_cents}" type="button">Record payment</button>` : '<span class="status-pill status-completed">Paid</span>'}` : 'Available after finalisation'}</td>
+      </tr>`).join('')}</tbody></table></div>
+      <p class="form-help">Employer UIF: ${money(run.total_uif_employer_cents, 'ZAR')} · SDL: ${money(run.total_sdl_cents, 'ZAR')} · Payment records do not initiate transfers.</p>
+      <form id="payroll-payment-form" class="record-form workflow-form hidden">
+        <h3>Record an external payment</h3><input name="employeeId" type="hidden" />
+        <label>Amount (ZAR)<input name="amount" type="number" min="0.01" step="0.01" required /></label>
+        <label>Paid date<input name="paidAt" type="date" value="${today}" required /></label>
+        <label>Method<select name="paymentMethod" required><option value="bank_transfer">Bank transfer</option><option value="cash">Cash</option><option value="cheque">Cheque</option><option value="other">Other</option></select></label>
+        <label>Payment reference (optional)<input name="paymentReference" maxlength="100" /></label>
+        <button class="button button-primary" type="submit">Save payment record</button><span class="inline-feedback" role="status"></span>
+      </form>
+      <section class="panel activity-panel"><h3>Payment history</h3>${payments.length ? `<div class="table-scroll"><table><thead><tr><th>Employee</th><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th></tr></thead><tbody>${payments.map((payment) => `<tr><td>${escapeHtml(payment.first_name)} ${escapeHtml(payment.last_name)}<small>${escapeHtml(payment.employee_number)}</small></td><td>${escapeHtml(payment.paid_at)}</td><td>${money(payment.amount_cents, 'ZAR')}</td><td>${escapeHtml(payment.payment_method.replace('_', ' '))}</td><td>${escapeHtml(payment.payment_reference || '—')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="form-help">No payment records. Add a record after an external payment is made.</p>'}</section>`;
+    if (!detailDialog.open) detailDialog.showModal();
+
+    detailDialog.querySelectorAll('.payroll-payslip').forEach((payslipButton) => {
+      payslipButton.addEventListener('click', async () => {
+        try {
+          await downloadAuthenticatedFile(
+            `/api/payroll/runs/${run.id}/employees/${payslipButton.dataset.employeeId}/payslip.pdf`,
+            `payslip-${run.id}-${payslipButton.dataset.employeeId}.pdf`
+          );
+        } catch (error) {
+          alert(error.message);
+        }
+      });
+    });
+    const paymentForm = detailDialog.querySelector('#payroll-payment-form');
+    detailDialog.querySelectorAll('.payroll-line-payment').forEach((paymentButton) => {
+      paymentButton.addEventListener('click', () => {
+        paymentForm.elements.employeeId.value = paymentButton.dataset.employeeId;
+        paymentForm.elements.amount.value = (Number(paymentButton.dataset.outstanding) / 100).toFixed(2);
+        paymentForm.classList.remove('hidden');
+        paymentForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        paymentForm.elements.amount.focus();
+      });
+    });
+    paymentForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const values = Object.fromEntries(new FormData(paymentForm).entries());
+      try {
+        const idempotencyKey = window.crypto?.randomUUID?.() ||
+          `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        await api(`/api/payroll/runs/${run.id}/payments`, {
+          method: 'POST',
+          body: JSON.stringify({
+            employeeId: Number(values.employeeId),
+            amountCents: Math.round(Number(values.amount) * 100),
+            paidAt: values.paidAt,
+            paymentMethod: values.paymentMethod,
+            paymentReference: values.paymentReference,
+            idempotencyKey,
+          }),
+        });
+        await renderPayrollRuns(content);
+      } catch (error) {
+        showInlineError(paymentForm, error.message);
+      }
+    });
+  }
+
+  content.querySelectorAll('.payroll-run-view').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        await showPayrollRun(button.dataset.id);
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+  });
+}
+
 async function renderExpenses(content) {
   const query = new URLSearchParams(expenseFilters);
   query.set('page', String(expensePage));
@@ -1661,6 +2569,7 @@ async function renderExpenses(content) {
 }
 
 async function renderReports(content) {
+  if (reportType === 'payroll' && !sessionInfo.business.isOwner) reportType = 'sales';
   const query = new URLSearchParams({ period: reportPeriod });
   if (reportStatusFilter) query.set('status', reportStatusFilter);
   if (reportType === 'receivables' && reportEntityFilter) query.set('customerId', reportEntityFilter);
@@ -1732,14 +2641,26 @@ async function renderReports(content) {
       <article class="panel report-panel"><div class="panel-heading"><div><h2>${receivables ? 'Customer balances' : 'Supplier balances'}</h2><p>Ranked by overdue balance</p></div></div>${parties.length ? `<div class="table-scroll"><table><thead><tr><th>${receivables ? 'Customer' : 'Supplier'}</th><th>Open invoices</th><th>Overdue</th><th>Outstanding</th></tr></thead><tbody>${parties.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${row.invoiceCount}</td><td>${money(row.overdueCents, currency)}</td><td>${money(row.outstandingCents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No outstanding balances.</div>'}</article>
     </section>
     <section class="panel report-panel"><div class="panel-heading"><div><h2>${receivables ? 'Customer invoices' : 'Supplier invoices'}</h2><p>POS sales are excluded; linked supplier expenses are not counted twice.</p></div></div>${report.invoices.length ? `<div class="table-scroll"><table><thead><tr><th>${receivables ? 'Customer' : 'Supplier'}</th><th>Invoice</th><th>Invoice date</th><th>Due date</th><th>Amount</th><th>Paid</th>${receivables ? '<th>Credited</th>' : ''}<th>Outstanding</th><th>Days overdue</th></tr></thead><tbody>${report.invoices.map((row) => `<tr><td>${escapeHtml(receivables ? row.customer_name : row.supplier_name)}</td><td><strong>${escapeHtml(receivables ? row.invoice_number : row.supplier_invoice_number)}</strong></td><td>${escapeHtml(row.invoice_date)}</td><td>${escapeHtml(row.due_date)}</td><td>${money(row.total_cents, currency)}</td><td>${money(row.paid_cents, currency)}</td>${receivables ? `<td>${money(row.credited_cents, currency)}</td>` : ''}<td><strong>${money(row.outstanding_cents, currency)}</strong></td><td>${row.days_overdue}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No invoices match these filters.</div>'}</section>`;
+  } else if (reportType === 'payroll') {
+    reportContent = `<section class="kpi-grid report-kpis">
+      ${kpiCard('▤', 'Finalised runs', String(report.summary.runCount), `${report.summary.employeeLineCount} employee payslip lines`, '', 'icon-blue')}
+      ${kpiCard('↗', 'Gross pay', money(report.summary.grossCents, currency), 'Finalised runs in the selected pay-date range', '', 'icon-green')}
+      ${kpiCard('−', 'PAYE + employee UIF + other deductions', money(report.summary.payeCents + report.summary.employeeUifCents + report.summary.otherDeductionsCents, currency), 'Estimated deductions', '', 'icon-red')}
+      ${kpiCard('⌁', 'Employer UIF + SDL', money(report.summary.employerCostCents, currency), 'Estimated employer costs', '', 'icon-amber')}
+      ${kpiCard('◎', 'Net pay', money(report.summary.netCents, currency), `${money(report.summary.paidToDateCents, currency)} paid to date`, '', 'icon-violet')}
+      ${kpiCard('!', 'Outstanding', money(report.summary.outstandingCents, currency), `${money(report.summary.paymentsRecordedInPeriodCents, currency)} payments recorded in selected period`, '', 'icon-red')}
+    </section>
+    ${report.truncated ? '<p class="form-help">Showing the first 1,000 runs or employee lines. Narrow the date range for a complete report.</p>' : ''}
+    <section class="panel report-panel"><div class="panel-heading"><div><h2>Finalised payroll runs</h2><p>Payment balances are calculated as of ${escapeHtml(report.range.asOfDate)}.</p></div></div>${report.runs.length ? `<div class="table-scroll"><table><thead><tr><th>Pay period</th><th>Pay date</th><th>Gross</th><th>Net</th><th>Paid to date</th><th>Outstanding</th></tr></thead><tbody>${report.runs.map((row) => `<tr><td>${escapeHtml(row.period_start)} – ${escapeHtml(row.period_end)}</td><td>${escapeHtml(row.pay_date)}</td><td>${money(row.total_gross_cents, currency)}</td><td>${money(row.total_net_cents, currency)}</td><td>${money(row.paid_cents, currency)}</td><td><strong>${money(row.outstanding_cents, currency)}</strong></td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No finalised payroll runs match this pay-date range.</div>'}</section>
+    <section class="panel report-panel"><div class="panel-heading"><div><h2>Employee totals</h2><p>Gross, estimated deductions and manual payments per employee.</p></div></div>${report.employeeLines.length ? `<div class="table-scroll"><table><thead><tr><th>Employee</th><th>Employee number</th><th>Pay date</th><th>Gross</th><th>PAYE estimate</th><th>Employee UIF</th><th>Other deductions</th><th>Employer UIF</th><th>SDL estimate</th><th>Net</th><th>Paid</th><th>Outstanding</th></tr></thead><tbody>${report.employeeLines.map((row) => `<tr><td><strong>${escapeHtml(row.first_name)} ${escapeHtml(row.last_name)}</strong></td><td>${escapeHtml(row.employee_number)}</td><td>${escapeHtml(row.pay_date)}</td><td>${money(row.gross_cents, currency)}</td><td>${money(row.paye_cents, currency)}</td><td>${money(row.uif_employee_cents, currency)}</td><td>${money(row.other_deductions_cents, currency)}</td><td>${money(row.uif_employer_cents, currency)}</td><td>${money(row.sdl_cents, currency)}</td><td>${money(row.net_cents, currency)}</td><td>${money(row.paid_cents, currency)}</td><td>${money(row.outstanding_cents, currency)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No employee totals to show.</div>'}</section>`;
   } else {
     reportContent = `<section class="panel report-panel"><div class="panel-heading"><div><h2>Customer activity</h2><p>Spend and transaction counts for the selected period.</p></div></div>${report.customers.length ? `<div class="table-scroll"><table><thead><tr><th>Customer</th><th>Email</th><th>Transactions</th><th>Average spend</th><th>Total spend</th><th>Last purchase</th></tr></thead><tbody>${report.customers.map((row) => `<tr><td><strong>${escapeHtml(row.name)}</strong></td><td>${escapeHtml(row.email || '—')}</td><td>${row.transactionCount}</td><td>${money(row.averageSpendCents, currency)}</td><td>${money(row.spendCents, currency)}</td><td>${escapeHtml(row.lastPurchaseAt ? dateTime(row.lastPurchaseAt, sessionInfo.business.timezone) : '—')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="mini-empty">No customers found.</div>'}</section>`;
   }
 
   content.innerHTML = `
-    <section class="page-heading"><div><span class="eyebrow">BUSINESS PERFORMANCE</span><h1>Reports</h1><p>Review sales, spending, stock and customer activity for ${escapeHtml(overview.business.name)}.</p><div id="report-export-feedback" class="inline-feedback" role="status"></div></div><div class="heading-actions"><button class="button button-secondary" id="report-print" type="button">Print / Save as PDF</button><button class="button button-secondary" id="report-export" type="button">Export CSV</button></div></section>
+    <section class="page-heading"><div><span class="eyebrow">BUSINESS PERFORMANCE</span><h1>Reports</h1><p>${reportType === 'payroll' ? `Finalised payroll estimates and manual payment tracking for ${escapeHtml(overview.business.name)}.` : `Review sales, spending, stock and customer activity for ${escapeHtml(overview.business.name)}.`}</p><div id="report-export-feedback" class="inline-feedback" role="status"></div></div><div class="heading-actions"><button class="button button-secondary" id="report-print" type="button">Print / Save as PDF</button><button class="button button-secondary" id="report-export" type="button">Export CSV</button></div></section>
     <section class="panel report-controls"><form id="report-filter-form" class="expense-filters">
-      <label>Report<select id="report-type" name="type"><option value="sales" ${reportType === 'sales' ? 'selected' : ''}>Sales</option><option value="expenses" ${reportType === 'expenses' ? 'selected' : ''}>Expenses</option><option value="profit-loss" ${reportType === 'profit-loss' ? 'selected' : ''}>Profit &amp; loss estimate</option><option value="activity" ${reportType === 'activity' ? 'selected' : ''}>System activity</option><option value="inventory" ${reportType === 'inventory' ? 'selected' : ''}>Inventory</option><option value="customers" ${reportType === 'customers' ? 'selected' : ''}>Customers</option><option value="receivables" ${reportType === 'receivables' ? 'selected' : ''}>Accounts receivable</option><option value="payables" ${reportType === 'payables' ? 'selected' : ''}>Accounts payable</option></select></label>
+      <label>Report<select id="report-type" name="type"><option value="sales" ${reportType === 'sales' ? 'selected' : ''}>Sales</option><option value="expenses" ${reportType === 'expenses' ? 'selected' : ''}>Expenses</option><option value="profit-loss" ${reportType === 'profit-loss' ? 'selected' : ''}>Profit &amp; loss estimate</option><option value="activity" ${reportType === 'activity' ? 'selected' : ''}>System activity</option><option value="inventory" ${reportType === 'inventory' ? 'selected' : ''}>Inventory</option><option value="customers" ${reportType === 'customers' ? 'selected' : ''}>Customers</option><option value="receivables" ${reportType === 'receivables' ? 'selected' : ''}>Accounts receivable</option><option value="payables" ${reportType === 'payables' ? 'selected' : ''}>Accounts payable</option>${sessionInfo.business.isOwner ? `<option value="payroll" ${reportType === 'payroll' ? 'selected' : ''}>Payroll</option>` : ''}</select></label>
       <label>Period<select id="report-period" name="period">${periodOptions.map(([value, label]) => `<option value="${value}" ${reportPeriod === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
       ${reportType === 'receivables' || reportType === 'payables' ? `<label>${reportType === 'receivables' ? 'Customer' : 'Supplier'}<select name="entityId"><option value="">All</option>${reportEntities.map((entity) => `<option value="${entity.id}" ${String(entity.id) === reportEntityFilter ? 'selected' : ''}>${escapeHtml(entity.name)}</option>`).join('')}</select></label><label>Balance status<select name="status"><option value="" ${!reportStatusFilter ? 'selected' : ''}>All balances</option><option value="outstanding" ${reportStatusFilter === 'outstanding' ? 'selected' : ''}>Outstanding</option><option value="overdue" ${reportStatusFilter === 'overdue' ? 'selected' : ''}>Overdue</option><option value="partially_paid" ${reportStatusFilter === 'partially_paid' ? 'selected' : ''}>Partially paid</option><option value="paid" ${reportStatusFilter === 'paid' ? 'selected' : ''}>Paid</option></select></label>` : ''}
       ${reportPeriod === 'custom' ? `<label>From<input type="date" name="startDate" value="${escapeHtml(reportStartDate || range.startDate)}" required /></label><label>To<input type="date" name="endDate" value="${escapeHtml(reportEndDate || range.endDate)}" required /></label>` : ''}
@@ -1747,14 +2668,14 @@ async function renderReports(content) {
       <button class="button button-secondary" type="submit">Apply</button>
     </form></section>
     <section class="kpi-grid report-kpis">
-      ${reportType === 'receivables' || reportType === 'payables' ? '' : `${kpiCard('↗', 'Sales revenue', money(overview.revenueCents, currency), `${overview.transactionCount} completed sales`, '', 'icon-green')}
+      ${reportType === 'receivables' || reportType === 'payables' || reportType === 'payroll' ? '' : `${kpiCard('↗', 'Sales revenue', money(overview.revenueCents, currency), `${overview.transactionCount} completed sales`, '', 'icon-green')}
       ${kpiCard('−', 'Operating expenses', money(overview.operatingExpensesCents, currency), `${overview.overdueExpenseCount} overdue expense${overview.overdueExpenseCount === 1 ? '' : 's'}`, '', 'icon-red')}
       ${kpiCard('⌁', 'Gross profit', money(overview.grossProfitCents, currency), overview.costCoverageComplete ? `${overview.grossMarginPct ?? 0}% margin` : `Estimate: ${overview.unknownCostUnits} units have missing costs treated as zero`, '', 'icon-amber')}
       ${kpiCard('◎', 'Net operating result', money(overview.netOperatingResultCents, currency), overview.costCoverageComplete ? 'Gross profit less recorded expenses' : 'Estimate: missing sale-time costs treated as zero', '', 'icon-blue')}
       ${kpiCard('▤', 'Stock value', money(overview.inventory.valuationCents, currency), overview.inventory.valuationComplete ? `${overview.inventory.lowStockCount} low · ${overview.inventory.outOfStockCount} out of stock` : 'Estimate — missing product costs treated as zero', '', 'icon-violet')}
       ${kpiCard('◎', 'Customers', String(overview.customers.total), `${overview.customers.newInPeriod} new in selected period`, '', 'icon-teal')}`}
     </section>
-    <div class="report-caveats">${overview.refundedCount ? `${overview.refundedCount} fully refunded sale(s), totalling ${money(overview.refundedCents, currency)}, are excluded from revenue. ` : ''}${overview.inventory.valuationComplete ? '' : 'Stock value is an estimate: missing product costs are treated as zero and may understate value. Add costs under Products & Services. '}${overview.costCoverageComplete ? '' : 'Profit is an estimate: missing sale-time costs are treated as zero and may overstate profit. Adding product costs helps future sales but does not change historical sale snapshots.'}</div>
+    <div class="report-caveats">${reportType === 'payroll' ? 'PAYE, UIF and SDL values are estimates based on rates configured by the business and are not statutory advice or submissions. Payment records are manual bookkeeping only; transfers happen outside WorkflowOS. Payroll figures are separate from sales revenue and operating expenses.' : `${overview.refundedCount ? `${overview.refundedCount} fully refunded sale(s), totalling ${money(overview.refundedCents, currency)}, are excluded from revenue. ` : ''}${overview.inventory.valuationComplete ? '' : 'Stock value is an estimate: missing product costs are treated as zero and may understate value. Add costs under Products & Services. '}${overview.costCoverageComplete ? '' : 'Profit is an estimate: missing sale-time costs are treated as zero and may overstate profit. Adding product costs helps future sales but does not change historical sale snapshots.'}`}</div>
     ${reportContent}
     <p class="form-help">CSV exports are business-scoped and spreadsheet-compatible. Use Print / Save as PDF for a printable report.</p>`;
   document.getElementById('report-print').addEventListener('click', () => window.print());
@@ -2375,9 +3296,11 @@ function showInlineError(form, message) {
     feedback.className = 'inline-feedback error';
     form.append(feedback);
   }
+  feedback.classList.add('error');
   feedback.textContent = message;
 }
 
 if (location.pathname === '/reset-password') renderResetPassword(new URLSearchParams(location.search).get('token') || '');
-else if (sessionToken && location.pathname !== '/login') loadAuthenticatedApp();
-else renderAuth();
+else if (publicPagePaths.has(location.pathname)) window.renderPublicSite(location.pathname);
+else if (sessionToken && location.pathname !== '/login' && location.pathname !== '/signup') loadAuthenticatedApp();
+else renderAuth('', location.pathname === '/signup' ? 'register' : 'login');
